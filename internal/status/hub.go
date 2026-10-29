@@ -36,6 +36,9 @@ type Snapshot struct {
 	// ConfirmKeys is the confirming combination as a spec and as labels.
 	ConfirmSpec string   `json:"confirmSpec"`
 	ConfirmKeys []string `json:"confirmKeys"`
+	// LockoutProtected is whether the TPM's lockout hierarchy has a
+	// password, which is what makes the PIN guess limit hold against root.
+	LockoutProtected bool `json:"lockoutProtected"`
 }
 
 // Hub fans events out to connected clients.

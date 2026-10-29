@@ -6,6 +6,7 @@ package tpm
 
 import (
 	"bytes"
+	"crypto/rand"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -428,4 +429,43 @@ func pad32(b []byte) []byte {
 	out := make([]byte, 32)
 	copy(out[32-len(b):], b)
 	return out
+}
+
+// ErrLockoutAuthSet means the lockout hierarchy already has a password.
+var ErrLockoutAuthSet = errors.New("tpm: the lockout authorization is already set")
+
+// ProtectLockout gives the TPM's lockout hierarchy a random password and
+// returns it. With an empty lockout authorization anyone with TPM access
+// (root) can reset the dictionary-attack counter and guess PINs without
+// limit; with this password set, only its holder can. The password is not
+// stored anywhere: it is a recovery code for the user to keep offline.
+func (k *TPM) ProtectLockout() (string, error) {
+	info, err := k.Info()
+	if err != nil {
+		return "", err
+	}
+	if info.LockoutAuthSet {
+		return "", ErrLockoutAuthSet
+	}
+	material := make([]byte, 24)
+	if _, err := rand.Read(material); err != nil {
+		return "", err
+	}
+	code := AuthValue(material)
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	_, err = tpm2.HierarchyChangeAuth{
+		AuthHandle: tpm2.AuthHandle{
+			Handle: tpm2.TPMRHLockout,
+			// A password session: the TPM authenticates the response of
+			// HierarchyChangeAuth with the new value, which go-tpm's HMAC
+			// sessions do not expect.
+			Auth: tpm2.PasswordAuth(nil),
+		},
+		NewAuth: tpm2.TPM2BAuth{Buffer: code},
+	}.Execute(k.t)
+	if err != nil {
+		return "", err
+	}
+	return string(code), nil
 }

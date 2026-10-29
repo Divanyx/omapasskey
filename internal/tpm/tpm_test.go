@@ -111,3 +111,29 @@ func TestHMACIsStable(t *testing.T) {
 		t.Fatal("hmac with empty key")
 	}
 }
+
+func TestProtectLockout(t *testing.T) {
+	k := openSim(t)
+	code, err := k.ProtectLockout()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(code) != 32 {
+		t.Fatalf("code %q", code)
+	}
+	info, err := k.Info()
+	if err != nil || !info.LockoutAuthSet {
+		t.Fatalf("lockout auth not set: %+v %v", info, err)
+	}
+	if _, err := k.ProtectLockout(); !errors.Is(err, ErrLockoutAuthSet) {
+		t.Fatalf("second protect: %v", err)
+	}
+	// Sealing still works afterwards.
+	b, err := k.Seal([]byte("x"), []byte("auth-value"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := k.Unseal(b, []byte("auth-value")); err != nil {
+		t.Fatal(err)
+	}
+}

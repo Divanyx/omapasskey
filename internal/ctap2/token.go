@@ -96,6 +96,9 @@ func (a *Authenticator) stopToken() {
 	clear(a.tok.value)
 	a.tok.unlocked.Wipe()
 	a.tok = nil
+	// Paged credential-management results were decrypted under this token;
+	// they end with it.
+	a.enumRPs, a.enumCreds = nil, nil
 }
 
 // verifyToken checks pinUvAuthParam = authenticate(token, message) for the

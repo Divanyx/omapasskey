@@ -119,6 +119,7 @@ func run(configPath, statePath, tpmPath, uhidPath, runDir string) error {
 			Device: device.Load().(string), Keyboards: len(watcher.Keyboards()),
 			Prompt:      pres.Current(),
 			ConfirmSpec: cfg.combo.Spec, ConfirmKeys: cfg.combo.Labels,
+			LockoutProtected: lockoutProtected(t),
 		}
 	})
 	events := &eventBridge{hub: hub, snapshot: func() any {
@@ -184,6 +185,9 @@ func run(configPath, statePath, tpmPath, uhidPath, runDir string) error {
 		}
 	}()
 	sdNotify("READY=1\nSTATUS=Omapasskey ready")
+	if !lockoutProtected(t) {
+		slog.Warn("the TPM lockout authorization is empty: root could reset the PIN guess limit; run 'sudo omapasskey tpm protect'")
+	}
 	slog.Info("omapasskeyd ready", "version", version, "pinSet", v.PINSet(), "keyboards", len(watcher.Keyboards()))
 
 	select {
@@ -480,6 +484,9 @@ func serveAdmin(conn net.Conn, auth *ctap2.Authenticator, t *tpm.TPM, w *presenc
 		reply(nil, auth.AdminDelete(req.PIN, req.ID))
 	case "reset":
 		reply(nil, auth.AdminReset())
+	case "tpm-protect":
+		code, err := t.ProtectLockout()
+		reply(map[string]string{"code": code}, err)
 	default:
 		reply(nil, errors.New("unknown command"))
 	}
@@ -552,4 +559,9 @@ func serveManage(conn net.Conn, auth *ctap2.Authenticator, allowed func(uint32) 
 	default:
 		reply(nil, errors.New("unknown command"))
 	}
+}
+
+func lockoutProtected(t *tpm.TPM) bool {
+	info, err := t.Info()
+	return err == nil && info.LockoutAuthSet
 }

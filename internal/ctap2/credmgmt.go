@@ -45,8 +45,15 @@ func (a *Authenticator) credentialManagement(r *request, params []byte) (any, er
 	if !ok {
 		return nil, Error(ErrMissingParameter)
 	}
-	// The continuations carry no authentication; they only page through
-	// what the authenticated "begin" call already decided to reveal.
+	// The continuations carry no pinUvAuthParam; they page through what the
+	// authenticated "begin" call revealed, and only while the token that
+	// authorised it is still valid (expiring it also drops the pages).
+	if sub == cmEnumerateRPsNext || sub == cmEnumerateCredsNext {
+		if t := a.current(); t == nil || t.permissions&permCM == 0 {
+			a.enumRPs, a.enumCreds = nil, nil
+			return nil, Error(ErrNotAllowed)
+		}
+	}
 	switch sub {
 	case cmEnumerateRPsNext:
 		e := a.enumRPs

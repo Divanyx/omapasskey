@@ -12,6 +12,7 @@ import (
 	"math/big"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/fxamacker/cbor/v2"
 	"github.com/google/go-tpm/tpm2/transport/simulator"
@@ -500,6 +501,20 @@ func TestEndToEnd(t *testing.T) {
 			t.Fatalf("RPs %d", total)
 		}
 		h.must(cmdCredentialManagement, map[int]any{1: cmEnumerateRPsNext})
+		// Paging must stop with the token: restart the enumeration, let the
+		// token expire, and the remaining page is gone.
+		h.must(cmdCredentialManagement, map[int]any{1: cmEnumerateRPsBegin, 3: 2, 4: auth(cmEnumerateRPsBegin, nil)})
+		h.a.tok.issued = h.a.tok.issued.Add(-time.Hour)
+		if st, _ := h.do(cmdCredentialManagement, map[int]any{1: cmEnumerateRPsNext}); st != ErrNotAllowed {
+			t.Fatalf("enumeration after token expiry: 0x%02x", st)
+		}
+		if h.a.enumRPs != nil {
+			t.Fatal("pages survived the token")
+		}
+		st, tok, p = h.token("hunter22", permCM, "")
+		if st != 0 {
+			t.Fatal(st)
+		}
 		sp := map[int]any{1: cdh("example.com")}
 		m = h.must(cmdCredentialManagement, map[int]any{1: cmEnumerateCredsBegin, 2: sp, 3: 2, 4: auth(cmEnumerateCredsBegin, sp)})
 		cbor.Unmarshal(m[9], &total)

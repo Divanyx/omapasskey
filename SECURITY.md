@@ -61,6 +61,8 @@ The confirm-key combination (default Left Shift + Right Shift) is set in the roo
 
 ### Known limits
 
+- The TPM's dictionary-attack lockout limits PIN guesses by root only if the TPM's lockout authorization is set. Many TPMs ship with it empty; then root can reset the counter (TPM2_DictionaryAttackLockReset) and keep guessing against the TPM at its speed. `sudo omapasskey tpm protect` sets a random lockout password (shown once, never stored); `omapasskey doctor` and `omapasskey status` report the state, and the service logs a warning at start.
+
 - Root (or any process able to read the service's memory or to replace its binary) can capture the PIN when you next type it. Without the PIN, root can neither use nor export keys.
 - The prompt is drawn by the desktop shell, which runs as you. Software running as you could draw a misleading prompt; the browser's own dialog names the site too.
 - If the TPM's owner hierarchy is cleared or the TPM replaced, every credential is lost.

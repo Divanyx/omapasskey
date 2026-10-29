@@ -34,6 +34,7 @@ Usage:
   sudo omapasskey list         list stored passkeys (asks for the PIN)
   sudo omapasskey delete ID    delete one passkey (ID prefix from list)
   sudo omapasskey reset        delete the PIN and ALL passkeys
+  sudo omapasskey tpm protect  lock the TPM's guess counter with a recovery code
   omapasskey keys              show the key combination that confirms
   sudo omapasskey keys set K   change it, e.g. leftctrl+rightctrl (2-4 keys)
   omapasskey version
@@ -73,6 +74,12 @@ func main() {
 		}
 	case "reset":
 		err = cmdReset()
+	case "tpm":
+		if len(args) == 2 && args[1] == "protect" {
+			err = cmdTPMProtect()
+		} else {
+			err = errors.New("usage: sudo omapasskey tpm protect")
+		}
 	case "keys":
 		if len(args) == 3 && args[1] == "set" {
 			err = cmdSetKeys(args[2])
@@ -305,6 +312,9 @@ func cmdStatus(asJSON bool) error {
 			fmt.Printf("  TPM         %s, lockout after %d wrong PINs (now %d)%s\n", strings.TrimSpace(st.TPM.Manufacturer),
 				st.TPM.MaxAuthFail, st.TPM.LockoutCounter, yesNo(st.TPM.InLockout, ", LOCKED OUT", ""))
 		}
+		if st.TPM != nil {
+			fmt.Printf("  root-proof  %s\n", yesNo(st.TPM.LockoutAuthSet, "yes, the TPM lockout has a password", "NO — root could reset the PIN guess limit: sudo omapasskey tpm protect"))
+		}
 		fmt.Printf("  keyboards   %d physical keyboard(s) can confirm\n", len(st.Keyboards))
 		for _, k := range st.Keyboards {
 			fmt.Printf("              - %s\n", k.Name)
@@ -383,12 +393,14 @@ func cmdDoctor() error {
 		check(rerr == nil, "desktop status stream reachable for this user", "add your UID to users= in /etc/omapasskey/omapasskey.conf")
 		var hello struct {
 			State struct {
-				PINSet bool   `json:"pinSet"`
-				Device string `json:"device"`
+				PINSet           bool   `json:"pinSet"`
+				Device           string `json:"device"`
+				LockoutProtected bool   `json:"lockoutProtected"`
 			} `json:"state"`
 		}
 		json.Unmarshal(line, &hello)
 		check(hello.State.PINSet, "PIN set", "sudo omapasskey pin set")
+		check(hello.State.LockoutProtected, "PIN guess limit holds against root (TPM lockout password set)", "sudo omapasskey tpm protect")
 		if hello.State.Device != "" {
 			node := "/dev/" + hello.State.Device
 			f, oerr := os.OpenFile(node, os.O_RDWR, 0)
@@ -492,5 +504,34 @@ func cmdSetKeys(spec string) error {
 		return fmt.Errorf("restarting the service: %v %s", err, out)
 	}
 	fmt.Printf("Confirm with: %s\n", strings.Join(combo.Labels, " + "))
+	return nil
+}
+
+func cmdTPMProtect() error {
+	if err := needRoot(); err != nil {
+		return err
+	}
+	fmt.Println(`This gives your TPM's lockout hierarchy a random password and shows it once.
+
+Without it, anyone with root can reset the TPM's wrong-PIN counter and keep
+guessing your passkey PIN. With it, only the holder of this code can.
+
+Keep the code offline (password manager, paper). It is not stored anywhere.
+You need it only to reset the TPM's lockout from the operating system; the
+firmware's "Clear TPM" still works without it (and erases all TPM keys).`)
+	fmt.Print("\nType 'protect' to continue: ")
+	line, _ := bufio.NewReader(os.Stdin).ReadString('\n')
+	if strings.TrimSpace(line) != "protect" {
+		return errors.New("nothing was changed")
+	}
+	resp, err := call(admin.Request{Cmd: "tpm-protect"})
+	if err != nil {
+		return err
+	}
+	var out struct {
+		Code string `json:"code"`
+	}
+	json.Unmarshal(resp.Data, &out)
+	fmt.Printf("\nTPM lockout recovery code (write it down now):\n\n    %s\n\n", out.Code)
 	return nil
 }
