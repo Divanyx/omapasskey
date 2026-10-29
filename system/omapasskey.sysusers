@@ -1,0 +1,2 @@
+# Omapasskey runs its TPM passkey service as this unprivileged user.
+u omapasskey - "Omapasskey TPM passkey service" /var/lib/omapasskey /usr/bin/nologin

@@ -1,0 +1,65 @@
+{
+  "schemaVersion": 1,
+  "id": "omapasskey",
+  "name": "Omapasskey",
+  "version": "1.0.0",
+  "author": "Divanyx",
+  "license": "MIT",
+  "homepage": "https://github.com/Divanyx/omapasskey",
+  "description": "Passkeys for Omarchy the way Windows Hello and macOS do them: Firefox, Chromium and every FIDO2 app store passkeys on this machine, in the TPM chip. Keys never leave the TPM, every use needs your PIN plus both Shift keys pressed on a real keyboard, so no program or AI agent can sign in for you. A themed prompt shows which site is asking.",
+  "kinds": [
+    "service",
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "service": "ui/Service.qml",
+    "barWidget": "ui/BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Omapasskey",
+    "description": "Shows whether the TPM passkey service is ready and lights up while a site waits for your confirmation. Click to set it up or to see its status.",
+    "category": "Security",
+    "aliases": [
+      "passkey",
+      "passkeys",
+      "webauthn",
+      "fido2",
+      "fido",
+      "security key",
+      "tpm",
+      "windows hello",
+      "touch id"
+    ],
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "showBarIcon": true,
+      "promptPosition": "Center",
+      "usageNotes": false
+    },
+    "schema": [
+      {
+        "key": "showBarIcon",
+        "type": "boolean",
+        "label": "Show the icon in the bar",
+        "defaultValue": true,
+        "description": "The confirmation prompt still appears when the icon is hidden."
+      },
+      {
+        "key": "promptPosition",
+        "type": "enum",
+        "label": "Where the confirmation prompt appears",
+        "options": ["Center", "Top", "Bottom"],
+        "defaultValue": "Center",
+        "description": "The prompt shows on the focused monitor and never takes keyboard focus; the browser keeps it."
+      },
+      {
+        "key": "usageNotes",
+        "type": "boolean",
+        "label": "Note every passkey use",
+        "defaultValue": false,
+        "description": "Shows a short note after each sign-in or registration, so every use leaves a visible trace."
+      }
+    ]
+  }
+}
