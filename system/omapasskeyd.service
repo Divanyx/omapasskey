@@ -3,6 +3,9 @@ Description=Omapasskey TPM passkeys (FIDO2 authenticator)
 Documentation=https://github.com/Divanyx/omapasskey
 After=tpm2.target systemd-udevd.service
 Wants=tpm2.target
+# Give up after five failed starts in a minute instead of looping forever.
+StartLimitIntervalSec=60
+StartLimitBurst=5
 
 [Service]
 Type=notify
@@ -21,7 +24,7 @@ RuntimeDirectory=omapasskey
 RuntimeDirectoryMode=0755
 UMask=0077
 Restart=on-failure
-RestartSec=2
+RestartSec=5
 LimitCORE=0
 
 # Sandbox: no capabilities, no network, no other devices, read-only system.
@@ -31,6 +34,9 @@ AmbientCapabilities=
 DevicePolicy=closed
 DeviceAllow=/dev/tpmrm0 rw
 DeviceAllow=char-input r
+# systemd opens OpenFile= inside this sandbox, so uhid must be allowed here;
+# the service user still cannot open it itself (it is root:root 0600).
+DeviceAllow=/dev/uhid rw
 ProtectSystem=strict
 ProtectHome=yes
 PrivateTmp=yes
