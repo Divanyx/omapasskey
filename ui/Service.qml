@@ -56,7 +56,7 @@ Item {
 
   readonly property string tooltip: !installChecked ? "Omapasskey"
     : !installed ? "Omapasskey — not set up yet: click to install the TPM passkey service"
-    : !connected ? "Omapasskey — the service is not running: click for details"
+    : !connected ? "Omapasskey — the service is not running: click to repair it"
     : waiting ? "Omapasskey — " + describe(prompt) + ": press Left Shift + Right Shift"
     : !pinSet ? "Omapasskey — no PIN yet: click to set one"
     : updateAvailable ? "Omapasskey — service " + version + ", plugin " + pluginVersion + ": click to update"
@@ -149,7 +149,9 @@ Item {
 
   function primaryAction() {
     if (!installed) setup()
-    else if (!connected) terminal(quote(setupScript) + " status")
+    // A service that is installed but not running is repaired by installing
+    // again: the setup script replaces binaries and unit and shows the log.
+    else if (!connected) setup()
     else if (!pinSet) terminal("sudo omapasskey pin set")
     else if (updateAvailable) setup()
     else terminal("omapasskey status; echo; omapasskey doctor")
