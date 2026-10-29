@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "omapasskey",
   "name": "Omapasskey",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "author": "Divanyx",
   "license": "MIT",
   "homepage": "https://github.com/Divanyx/omapasskey",
@@ -17,7 +17,7 @@
   },
   "barWidget": {
     "displayName": "Omapasskey",
-    "description": "Shows whether the TPM passkey service is ready and lights up while a site waits for your confirmation. Click to set it up or to see its status.",
+    "description": "Shows whether the TPM passkey service is ready and lights up while a site waits for your confirmation. Left click: status or setup. Right click: manage your passkeys. Middle click: change the PIN.",
     "category": "Security",
     "aliases": [
       "passkey",
@@ -35,7 +35,8 @@
     "defaults": {
       "showBarIcon": true,
       "promptPosition": "Center",
-      "usageNotes": false
+      "usageNotes": false,
+      "confirmKeys": "leftshift+rightshift"
     },
     "schema": [
       {
@@ -46,10 +47,21 @@
         "description": "The confirmation prompt still appears when the icon is hidden."
       },
       {
+        "key": "confirmKeys",
+        "type": "string",
+        "label": "Keys that confirm a passkey use",
+        "defaultValue": "leftshift+rightshift",
+        "description": "2 to 4 keys pressed together on a physical keyboard, joined with +, e.g. leftctrl+rightctrl or leftalt+space or rightctrl+f12. Changing it opens a terminal that asks for sudo, because the setting lives in the root-owned service config."
+      },
+      {
         "key": "promptPosition",
         "type": "enum",
         "label": "Where the confirmation prompt appears",
-        "options": ["Center", "Top", "Bottom"],
+        "options": [
+          "Center",
+          "Top",
+          "Bottom"
+        ],
         "defaultValue": "Center",
         "description": "The prompt shows on the focused monitor and never takes keyboard focus; the browser keeps it."
       },

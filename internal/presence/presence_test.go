@@ -38,3 +38,18 @@ func TestKeyboardsOnThisMachine(t *testing.T) {
 		t.Logf("physical keyboard: %s (%s)", kb.Node, kb.Name)
 	}
 }
+
+func TestParseCombo(t *testing.T) {
+	c, err := ParseCombo("LeftCtrl + rightctrl")
+	if err != nil || c.Spec != "leftctrl+rightctrl" || len(c.Codes) != 2 || c.Labels[1] != "Right Ctrl" {
+		t.Fatalf("%+v %v", c, err)
+	}
+	for _, bad := range []string{"leftshift", "a+b+c+d+e", "leftshift+leftshift", "leftshift+esc", "foo+bar"} {
+		if _, err := ParseCombo(bad); err == nil {
+			t.Errorf("%q accepted", bad)
+		}
+	}
+	if DefaultCombo().Spec != "leftshift+rightshift" {
+		t.Fatal("default")
+	}
+}

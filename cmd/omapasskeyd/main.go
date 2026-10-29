@@ -54,6 +54,7 @@ type config struct {
 	users           map[uint32]bool
 	minPINLength    int
 	presenceTimeout time.Duration
+	combo           *presence.Combo
 }
 
 func main() {
@@ -104,6 +105,7 @@ func run(configPath, statePath, tpmPath, uhidPath, runDir string) error {
 	}
 
 	watcher := presence.New(cfg.presenceTimeout)
+	watcher.Combo = cfg.combo
 	var hub *status.Hub
 	var device atomic.Value
 	device.Store("")
@@ -115,7 +117,8 @@ func run(configPath, statePath, tpmPath, uhidPath, runDir string) error {
 		return status.Snapshot{
 			Version: version, PINSet: s.PINSet, PINRetries: s.PINRetries,
 			Device: device.Load().(string), Keyboards: len(watcher.Keyboards()),
-			Prompt: pres.Current(),
+			Prompt:      pres.Current(),
+			ConfirmSpec: cfg.combo.Spec, ConfirmKeys: cfg.combo.Labels,
 		}
 	})
 	events := &eventBridge{hub: hub, snapshot: func() any {
@@ -142,6 +145,11 @@ func run(configPath, statePath, tpmPath, uhidPath, runDir string) error {
 		return err
 	}
 	defer adminL.Close()
+	manageL, err := listenManage(filepath.Join(runDir, "manage.sock"), auth, func(uid uint32) bool { return cfg.users[uid] })
+	if err != nil {
+		return err
+	}
+	defer manageL.Close()
 
 	dev, err := openUHID(uhidPath)
 	if err != nil {
@@ -265,7 +273,7 @@ func sdNotify(state string) {
 }
 
 func loadConfig(path string) (*config, error) {
-	cfg := &config{users: map[uint32]bool{}, minPINLength: 6, presenceTimeout: 30 * time.Second}
+	cfg := &config{users: map[uint32]bool{}, minPINLength: 6, presenceTimeout: 30 * time.Second, combo: presence.DefaultCombo()}
 	f, err := os.Open(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return cfg, nil
@@ -306,6 +314,12 @@ func loadConfig(path string) (*config, error) {
 				return nil, fmt.Errorf("%s:%d: presence_timeout must be 5..120 seconds", path, line)
 			}
 			cfg.presenceTimeout = time.Duration(n) * time.Second
+		case "confirm_keys":
+			c, err := presence.ParseCombo(value)
+			if err != nil {
+				return nil, fmt.Errorf("%s:%d: confirm_keys: %w", path, line, err)
+			}
+			cfg.combo = c
 		default:
 			return nil, fmt.Errorf("%s:%d: unknown setting %q", path, line, key)
 		}
@@ -358,6 +372,7 @@ func (p *presenceBridge) Confirm(ctx context.Context, pr ctap2.Prompt) error {
 	prompt := &status.Prompt{
 		ID: p.next.Add(1), Op: pr.Op, RPID: pr.RPID,
 		TimeoutMs: p.watcher.Timeout.Milliseconds(), Keyboards: names,
+		Keys: p.watcher.Combo.Labels,
 	}
 	p.mu.Lock()
 	p.current = prompt
@@ -448,6 +463,7 @@ func serveAdmin(conn net.Conn, auth *ctap2.Authenticator, t *tpm.TPM, w *presenc
 		out := map[string]any{
 			"version": version, "authenticator": auth.AdminStatus(),
 			"device": device.Load().(string), "keyboards": w.Keyboards(),
+			"confirmSpec": w.Combo.Spec, "confirmKeys": w.Combo.Labels,
 			"aaguid": fmt.Sprintf("%x-%x-%x-%x-%x", aaguid[0:4], aaguid[4:6], aaguid[6:8], aaguid[8:10], aaguid[10:16]),
 		}
 		if terr == nil {
@@ -464,6 +480,75 @@ func serveAdmin(conn net.Conn, auth *ctap2.Authenticator, t *tpm.TPM, w *presenc
 		reply(nil, auth.AdminDelete(req.PIN, req.ID))
 	case "reset":
 		reply(nil, auth.AdminReset())
+	default:
+		reply(nil, errors.New("unknown command"))
+	}
+}
+
+// listenManage serves the desktop's passkey manager. Every request carries
+// the PIN and is answered only after the key combination is pressed on a
+// physical keyboard, so a program that learned the PIN still cannot list or
+// delete anything by itself.
+func listenManage(path string, auth *ctap2.Authenticator, allowed func(uint32) bool) (net.Listener, error) {
+	os.Remove(path)
+	l, err := net.Listen("unix", path)
+	if err != nil {
+		return nil, err
+	}
+	if err := os.Chmod(path, 0o666); err != nil {
+		l.Close()
+		return nil, err
+	}
+	go func() {
+		for {
+			conn, err := l.Accept()
+			if err != nil {
+				return
+			}
+			go serveManage(conn, auth, allowed)
+		}
+	}()
+	return l, nil
+}
+
+func serveManage(conn net.Conn, auth *ctap2.Authenticator, allowed func(uint32) bool) {
+	defer conn.Close()
+	if uid, ok := status.PeerUID(conn); !ok || (uid != 0 && !allowed(uid)) {
+		return
+	}
+	conn.SetDeadline(time.Now().Add(90 * time.Second))
+	line, err := bufio.NewReader(io.LimitReader(conn, 4096)).ReadBytes('\n')
+	if err != nil {
+		return
+	}
+	var req admin.Request
+	reply := func(data any, err error) {
+		resp := admin.Response{OK: err == nil}
+		if err != nil {
+			resp.Error = err.Error()
+		} else {
+			resp.Data, _ = json.Marshal(data)
+		}
+		json.NewEncoder(conn).Encode(resp)
+	}
+	if err := json.Unmarshal(line, &req); err != nil {
+		reply(nil, errors.New("bad request"))
+		return
+	}
+	// The browser-side may be gone by the time the user presses the keys;
+	// the request lives as long as the connection.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() {
+		buf := make([]byte, 1)
+		conn.Read(buf)
+		cancel()
+	}()
+	switch req.Cmd {
+	case "list":
+		reply(auth.UserList(ctx, req.PIN))
+	case "delete":
+		reply(auth.UserDelete(ctx, req.PIN, req.ID))
 	default:
 		reply(nil, errors.New("unknown command"))
 	}

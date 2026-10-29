@@ -57,6 +57,8 @@ type Watcher struct {
 	SysDir  string // /sys/class/input
 	DevDir  string // /dev/input
 	Timeout time.Duration
+	// Combo is the key combination that confirms; DefaultCombo if unset.
+	Combo *Combo
 	// allowVirtual accepts software keyboards too. Only test builds set it,
 	// to exercise the event handling with a uinput device.
 	allowVirtual bool
@@ -67,7 +69,14 @@ func New(timeout time.Duration) *Watcher {
 	return &Watcher{SysDir: "/sys/class/input", DevDir: "/dev/input", Timeout: timeout}
 }
 
-// Keyboards lists the physical keyboards that have both Shift keys.
+func (w *Watcher) combo() *Combo {
+	if w.Combo != nil {
+		return w.Combo
+	}
+	return DefaultCombo()
+}
+
+// Keyboards lists the physical keyboards that have every key of the combo.
 func (w *Watcher) Keyboards() []Keyboard {
 	entries, err := os.ReadDir(w.SysDir)
 	if err != nil {
@@ -93,7 +102,7 @@ func (w *Watcher) inspect(event string) (Keyboard, bool) {
 		return Keyboard{}, false
 	}
 	caps, err := os.ReadFile(filepath.Join(base, "device", "capabilities", "key"))
-	if err != nil || !hasKeys(string(caps), keyLeftShift, keyRightShift) {
+	if err != nil || !hasKeys(string(caps), w.combo().Codes...) {
 		return Keyboard{}, false
 	}
 	name, _ := os.ReadFile(filepath.Join(base, "device", "name"))
@@ -124,15 +133,34 @@ func hasKeys(bitmap string, codes ...int) bool {
 
 type device struct {
 	fd       int
-	left     bool
-	right    bool
-	armed    bool // both keys were up at some point since the prompt began
+	keys     []int
+	down     map[int]bool
+	armed    bool // every combo key was up at some point since the prompt began
 	keyboard Keyboard
 }
 
-// Wait blocks until both Shift keys are held on one physical keyboard, Escape
-// is pressed, ctx ends, or the timeout passes. Presses that began before the
-// call do not count: the keys must be released and pressed again.
+func (d *device) allDown() bool {
+	for _, k := range d.keys {
+		if !d.down[k] {
+			return false
+		}
+	}
+	return true
+}
+
+func (d *device) noneDown() bool {
+	for _, k := range d.keys {
+		if d.down[k] {
+			return false
+		}
+	}
+	return true
+}
+
+// Wait blocks until every key of the combination is held on one physical
+// keyboard, Escape is pressed, ctx ends, or the timeout passes. Presses that
+// began before the call do not count: the keys must be released and pressed
+// again.
 func (w *Watcher) Wait(ctx context.Context) error {
 	devs, err := w.open()
 	if err != nil {
@@ -185,7 +213,7 @@ func (w *Watcher) Wait(ctx context.Context) error {
 			if result != nil {
 				return result
 			}
-			if d.armed && d.left && d.right {
+			if d.armed && d.allDown() {
 				return nil
 			}
 		}
@@ -204,7 +232,7 @@ func (w *Watcher) open() ([]*device, error) {
 			unix.Close(fd)
 			continue
 		}
-		d := &device{fd: fd, keyboard: kb}
+		d := &device{fd: fd, keyboard: kb, keys: w.combo().Codes, down: map[int]bool{}}
 		if err := d.sync(); err != nil {
 			unix.Close(fd)
 			continue
@@ -246,9 +274,10 @@ func (d *device) sync() error {
 	if _, _, errno := unix.Syscall(unix.SYS_IOCTL, uintptr(d.fd), uintptr(req), uintptr(unsafe.Pointer(&keys[0]))); errno != 0 {
 		return errno
 	}
-	d.left = keys[keyLeftShift/8]&(1<<(keyLeftShift%8)) != 0
-	d.right = keys[keyRightShift/8]&(1<<(keyRightShift%8)) != 0
-	if !d.left && !d.right {
+	for _, k := range d.keys {
+		d.down[k] = keys[k/8]&(1<<(k%8)) != 0
+	}
+	if d.noneDown() {
 		d.armed = true
 	}
 	return nil
@@ -270,7 +299,7 @@ func (d *device) drain(buf []byte) (error, error) {
 		for off := 0; off+eventSize <= n; off += eventSize {
 			ev := buf[off : off+eventSize]
 			typ := binary.NativeEndian.Uint16(ev[16:])
-			code := binary.NativeEndian.Uint16(ev[18:])
+			code := int(binary.NativeEndian.Uint16(ev[18:]))
 			value := int32(binary.NativeEndian.Uint32(ev[20:]))
 			switch {
 			case typ == evSyn && code == synDropped:
@@ -279,17 +308,15 @@ func (d *device) drain(buf []byte) (error, error) {
 				}
 			case typ == evKey && code == keyEsc && value == 1:
 				return ErrDenied, nil
-			case typ == evKey && (code == keyLeftShift || code == keyRightShift):
-				down := value != 0 // 1 press, 2 autorepeat
-				if code == keyLeftShift {
-					d.left = down
-				} else {
-					d.right = down
+			case typ == evKey:
+				if _, ours := d.down[code]; !ours {
+					continue
 				}
-				if !d.left && !d.right {
+				d.down[code] = value != 0 // 1 press, 2 autorepeat
+				if d.noneDown() {
 					d.armed = true
 				}
-				if d.armed && d.left && d.right {
+				if d.armed && d.allDown() {
 					return nil, nil
 				}
 			}

@@ -33,6 +33,9 @@ Item {
   property bool pinSet: false
   property int pinRetries: 8
   property int keyboards: 0
+  property string confirmSpec: ""
+  property var confirmKeys: []
+  property string requestedKeys: ""
   property string device: ""
 
   // The confirmation the service is waiting for, or null.
@@ -65,6 +68,7 @@ Item {
 
   function applySettings(values) {
     settings = values || ({})
+    maybeApplyKeys()
   }
 
   // What a prompt asks for, in words.
@@ -128,6 +132,9 @@ Item {
     if (s.pinRetries !== undefined) pinRetries = Number(s.pinRetries) || 0
     if (s.keyboards !== undefined) keyboards = Number(s.keyboards) || 0
     if (s.device !== undefined) device = String(s.device || "")
+    if (s.confirmSpec !== undefined) confirmSpec = String(s.confirmSpec || "")
+    if (s.confirmKeys !== undefined) confirmKeys = s.confirmKeys || []
+    maybeApplyKeys()
   }
 
   function startPrompt(p) {
@@ -159,6 +166,20 @@ Item {
 
   function setup() { terminal(quote(setupScript) + " install") }
   function listPasskeys() { terminal("sudo omapasskey list") }
+  function openManager() { manager.open() }
+
+  // The confirming keys live in the root-owned service config, so a change
+  // in the plugin settings is applied in a terminal with sudo — once per
+  // requested value, and only when it differs from what the service uses.
+  function normalizeKeys(spec) {
+    return String(spec || "").toLowerCase().split(/[+, ]+/).filter(function(k) { return k.length > 0 }).join("+")
+  }
+  function maybeApplyKeys() {
+    var want = normalizeKeys(settings.confirmKeys)
+    if (!connected || want === "" || confirmSpec === "" || want === confirmSpec || want === requestedKeys) return
+    requestedKeys = want
+    terminal("sudo omapasskey keys set " + quote(want))
+  }
   function changePin() { terminal("sudo omapasskey pin change") }
 
   // ------------------------------------------------------------ plumbing
@@ -223,6 +244,11 @@ Item {
   }
 
   PromptWindow {
+    service: root
+  }
+
+  ManageWindow {
+    id: manager
     service: root
   }
 }

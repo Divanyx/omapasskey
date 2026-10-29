@@ -46,6 +46,12 @@ A CTAP "touch" is Left Shift + Right Shift held together on one keyboard whose s
 
 Presence is collected **before** a PIN is checked, so software cannot spend PIN retries, and once per ceremony: the press that accompanied the PIN also covers the registration or sign-in it authorises (within 30 s).
 
+### The passkey manager
+
+The right-click manager sends the PIN to the service over `/run/omapasskey/manage.sock` (only the configured desktop users may connect). The service answers only after the confirm keys are pressed on a physical keyboard, and the same PIN retry counter and TPM lockout apply. The PIN is typed into the desktop shell, which runs as you — like any PIN prompt on a Linux desktop — but knowing it is never enough without the key press.
+
+The confirm-key combination (default Left Shift + Right Shift) is set in the root-owned `/etc/omapasskey/omapasskey.conf` (`confirm_keys`), so software running as you cannot weaken it.
+
 ### Deliberate deviations from CTAP 2.1
 
 - `alwaysUv` is permanently on: every registration and every sign-in needs the PIN, even if the site asks for no user verification.

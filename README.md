@@ -55,7 +55,9 @@ Then try it on [webauthn.io](https://webauthn.io): register, sign in.
 
 - **Register a passkey:** on a site's security settings choose *Add a passkey* or *Add a security key*. Firefox and Chromium ask for your PIN, Omapasskey asks for both Shift keys.
 - **Sign in:** choose *Sign in with a passkey*. Several accounts on the same site? The browser shows a picker.
-- **Bar icon:** left click shows status and a health check, middle click lists your passkeys, right click changes the PIN.
+- **Manage passkeys:** right click the bar icon. Enter your PIN, press the confirm keys, and you see every passkey stored here — hover one for its details (account, created, kind, PRF, protection), delete it with the trash icon (asks again, and needs the keys again). The PIN is kept only while the panel is open.
+- **Bar icon:** left click shows status, a health check, setup or repair; middle click changes the PIN; right click opens the manager.
+- **Choose the confirm keys:** both Shift keys by default. In the plugin settings (*Keys that confirm a passkey use*) or with `sudo omapasskey keys set leftctrl+rightctrl` pick 2–4 keys, e.g. `leftalt+space`, `rightctrl+f12`. The choice lives in the root-owned service config, so software cannot change it; the plugin opens a sudo terminal to apply it.
 - **Command line:**
 
   ```bash
@@ -66,6 +68,8 @@ Then try it on [webauthn.io](https://webauthn.io): register, sign in.
   sudo omapasskey delete ID  # remove one
   sudo omapasskey pin change
   sudo omapasskey reset      # erase PIN and all passkeys
+  omapasskey keys            # show the confirm keys
+  sudo omapasskey keys set leftctrl+rightctrl
   ```
 
 ## Security model

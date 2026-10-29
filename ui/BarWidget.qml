@@ -56,8 +56,8 @@ BarWidget {
     onPressed: function(buttonCode) {
       if (!root.passkeys) return
       if (buttonCode === Qt.LeftButton) root.passkeys.primaryAction()
-      else if (buttonCode === Qt.MiddleButton) root.passkeys.listPasskeys()
-      else if (buttonCode === Qt.RightButton) root.passkeys.changePin()
+      else if (buttonCode === Qt.MiddleButton) root.passkeys.changePin()
+      else if (buttonCode === Qt.RightButton) root.passkeys.openManager()
     }
   }
 }

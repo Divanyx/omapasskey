@@ -34,6 +34,8 @@ Usage:
   sudo omapasskey list         list stored passkeys (asks for the PIN)
   sudo omapasskey delete ID    delete one passkey (ID prefix from list)
   sudo omapasskey reset        delete the PIN and ALL passkeys
+  omapasskey keys              show the key combination that confirms
+  sudo omapasskey keys set K   change it, e.g. leftctrl+rightctrl (2-4 keys)
   omapasskey version
 `
 
@@ -71,6 +73,14 @@ func main() {
 		}
 	case "reset":
 		err = cmdReset()
+	case "keys":
+		if len(args) == 3 && args[1] == "set" {
+			err = cmdSetKeys(args[2])
+		} else if len(args) == 1 {
+			err = cmdShowKeys()
+		} else {
+			err = errors.New("usage: omapasskey keys [set COMBO]")
+		}
 	case "version", "--version", "-v":
 		fmt.Println(version)
 	case "help", "--help", "-h":
@@ -413,4 +423,74 @@ func orDash(s string) string {
 		return "—"
 	}
 	return s
+}
+
+const configPath = "/etc/omapasskey/omapasskey.conf"
+
+func cmdShowKeys() error {
+	conn, err := net.DialTimeout("unix", admin.StatusSocketPath, 3*time.Second)
+	if err != nil {
+		return errors.New("the service is not running (systemctl status omapasskeyd)")
+	}
+	defer conn.Close()
+	conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+	line, err := bufio.NewReader(conn).ReadBytes('\n')
+	if err != nil {
+		return err
+	}
+	var hello struct {
+		State struct {
+			ConfirmSpec string   `json:"confirmSpec"`
+			ConfirmKeys []string `json:"confirmKeys"`
+		} `json:"state"`
+	}
+	json.Unmarshal(line, &hello)
+	fmt.Printf("%s  (%s)\n", strings.Join(hello.State.ConfirmKeys, " + "), hello.State.ConfirmSpec)
+	return nil
+}
+
+func cmdSetKeys(spec string) error {
+	if err := needRoot(); err != nil {
+		return err
+	}
+	combo, err := presence.ParseCombo(spec)
+	if err != nil {
+		return err
+	}
+	w := presence.New(0)
+	w.Combo = combo
+	if len(w.Keyboards()) == 0 {
+		return fmt.Errorf("no physical keyboard has all of %s", strings.Join(combo.Labels, " + "))
+	}
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return err
+	}
+	var out []string
+	replaced := false
+	for _, l := range strings.Split(strings.TrimRight(string(data), "\n"), "\n") {
+		if k, _, ok := strings.Cut(l, "="); ok && strings.TrimSpace(k) == "confirm_keys" {
+			if !replaced {
+				out = append(out, "confirm_keys = "+combo.Spec)
+				replaced = true
+			}
+			continue
+		}
+		out = append(out, l)
+	}
+	if !replaced {
+		out = append(out, "# Keys pressed together to confirm a passkey use (2-4, physical keyboard).", "confirm_keys = "+combo.Spec)
+	}
+	tmp := configPath + ".new"
+	if err := os.WriteFile(tmp, []byte(strings.Join(out, "\n")+"\n"), 0o644); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, configPath); err != nil {
+		return err
+	}
+	if out, err := exec.Command("systemctl", "restart", "omapasskeyd").CombinedOutput(); err != nil {
+		return fmt.Errorf("restarting the service: %v %s", err, out)
+	}
+	fmt.Printf("Confirm with: %s\n", strings.Join(combo.Labels, " + "))
+	return nil
 }

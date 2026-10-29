@@ -21,6 +21,8 @@ type Prompt struct {
 	RPID      string   `json:"rp,omitempty"`
 	TimeoutMs int64    `json:"timeoutMs"`
 	Keyboards []string `json:"keyboards"`
+	// Keys are the labels of the confirming combination, in order.
+	Keys []string `json:"keys"`
 }
 
 // Snapshot is the state a new client starts from.
@@ -31,6 +33,9 @@ type Snapshot struct {
 	Device     string  `json:"device,omitempty"`
 	Keyboards  int     `json:"keyboards"`
 	Prompt     *Prompt `json:"prompt,omitempty"`
+	// ConfirmKeys is the confirming combination as a spec and as labels.
+	ConfirmSpec string   `json:"confirmSpec"`
+	ConfirmKeys []string `json:"confirmKeys"`
 }
 
 // Hub fans events out to connected clients.

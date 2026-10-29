@@ -21,6 +21,22 @@ PanelWindow {
   readonly property color text: Commons.Color.popups.text
   readonly property int pad: Style.space(22)
 
+  // The confirming keys, as the service announced them.
+  readonly property var keyLabels: {
+    var p = service ? (service.prompt || service.outcomePrompt) : null
+    var k = p && p.keys && p.keys.length ? p.keys : (service && service.confirmKeys.length ? service.confirmKeys : ["Left Shift", "Right Shift"])
+    return k
+  }
+  readonly property var keycaps: {
+    var out = []
+    for (var i = 0; i < keyLabels.length; i++) {
+      if (i > 0) out.push("+")
+      out.push(String(keyLabels[i]).replace(/^Left Shift$/, "⇧  Shift").replace(/^Right Shift$/, "Shift  ⇧"))
+    }
+    return out
+  }
+  readonly property string keysText: keyLabels.join(" + ")
+
   // Glyphs from the Nerd Font the shell already uses.
   readonly property string glyphShieldKey: "󰯄"
   readonly property string glyphCheck: "󰗠"
@@ -144,7 +160,7 @@ PanelWindow {
         spacing: Style.space(12)
 
         Repeater {
-          model: ["⇧  Shift", "+", "Shift  ⇧"]
+          model: win.keycaps
 
           Item {
             width: modelData === "+" ? plus.implicitWidth : Math.max(keyLabel.implicitWidth + Style.space(28), Style.space(110))
@@ -200,8 +216,8 @@ PanelWindow {
         wrapMode: Text.WordWrap
         textFormat: Text.PlainText
         text: win.reset
-          ? "Press both Shift keys only if you really want to erase everything."
-          : "Press both Shift keys together to confirm"
+          ? "Press " + win.keysText + " only if you really want to erase everything."
+          : "Press " + win.keysText + " together to confirm"
         color: win.text
         font.family: Style.font.family
         font.pixelSize: Style.font.body

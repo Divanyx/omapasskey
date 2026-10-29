@@ -1,6 +1,7 @@
 package ctap2
 
 import (
+	"context"
 	"crypto/sha256"
 	"errors"
 	"time"
@@ -225,4 +226,61 @@ func (a *Authenticator) AdminReset() error {
 		a.events.Done("reset", "", true)
 	}
 	return nil
+}
+
+// userUnlock is adminUnlock for an ordinary user: it first asks for the
+// physical confirmation, so neither the passkey list nor a PIN try can be had
+// by software alone.
+func (a *Authenticator) userUnlock(ctx context.Context, pin string) (*vault.Unlocked, error) {
+	if !a.vault.PINSet() {
+		return nil, ErrAdminNoPIN
+	}
+	if a.vault.PINRetries() == 0 {
+		return nil, ErrAdminBlocked
+	}
+	if a.authBlocked() {
+		return nil, ErrAdminLockout
+	}
+	r := &request{ctx: ctx, status: func(byte) {}}
+	if err := a.confirm(r, Prompt{Op: "manage"}, false); err != nil {
+		return nil, ErrNotConfirmed
+	}
+	return a.adminUnlock(pin)
+}
+
+// ErrNotConfirmed means the key combination was not pressed.
+var ErrNotConfirmed = errors.New("not confirmed on the keyboard")
+
+// UserList lists the passkeys after the PIN and a key press.
+func (a *Authenticator) UserList(ctx context.Context, pin string) ([]AccountInfo, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	u, err := a.userUnlock(ctx, pin)
+	if err != nil {
+		return nil, err
+	}
+	defer u.Wipe()
+	return a.accounts(u)
+}
+
+// UserDelete deletes one passkey after the PIN and a key press and returns
+// the remaining list.
+func (a *Authenticator) UserDelete(ctx context.Context, pin string, id []byte) ([]AccountInfo, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	u, err := a.userUnlock(ctx, pin)
+	if err != nil {
+		return nil, err
+	}
+	defer u.Wipe()
+	if a.vault.FindByID(id) == nil {
+		return nil, ErrAdminNotFound
+	}
+	if err := a.vault.Delete(id); err != nil {
+		return nil, ErrAdminInternal
+	}
+	if a.events != nil {
+		a.events.Done("delete", "", true)
+	}
+	return a.accounts(u)
 }
