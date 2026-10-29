@@ -78,7 +78,7 @@ fetch_release() {
 build_source() {
   local dir="$1" a
   a="$(arch)"
-  command -v go >/dev/null || die "--from-source needs Go (sudo pacman -S go)."
+  command -v go >/dev/null || die "--from-source needs the Go toolchain (go) on the PATH."
   echo "Building from $checkout"
   (
     cd "$checkout"
