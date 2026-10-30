@@ -191,6 +191,7 @@ PanelWindow {
     Row {
       spacing: 12
       Text {
+        textFormat: Text.PlainText
         text: "󰯄"
         color: win.acc
         font.family: Style.font.family
@@ -199,6 +200,7 @@ PanelWindow {
       Column {
         anchors.verticalCenter: parent.verticalCenter
         Text {
+          textFormat: Text.PlainText
           text: "Passkeys on this computer"
           color: win.fg
           font.family: Style.font.family
@@ -206,6 +208,7 @@ PanelWindow {
           font.bold: true
         }
         Text {
+          textFormat: Text.PlainText
           text: win.phase === "list" ? win.accounts.length + " stored in the TPM · hover for details" : "Kept in the TPM, unlocked with your PIN"
           color: Util.alpha(win.fg, 0.6)
           font.family: Style.font.family
@@ -220,6 +223,7 @@ PanelWindow {
       width: parent.width
       spacing: 10
       Text {
+        textFormat: Text.PlainText
         width: parent.width
         wrapMode: Text.WordWrap
         text: "Enter your passkey PIN. Omapasskey then asks you to press " + win.keysText + " on your keyboard."
@@ -249,6 +253,7 @@ PanelWindow {
         }
       }
       Text {
+        textFormat: Text.PlainText
         visible: win.message !== ""
         width: parent.width
         wrapMode: Text.WordWrap
@@ -265,6 +270,7 @@ PanelWindow {
       width: parent.width
       spacing: 8
       Text {
+        textFormat: Text.PlainText
         width: parent.width
         horizontalAlignment: Text.AlignHCenter
         text: "Press " + win.keysText
@@ -274,6 +280,7 @@ PanelWindow {
         font.bold: true
       }
       Text {
+        textFormat: Text.PlainText
         width: parent.width
         horizontalAlignment: Text.AlignHCenter
         text: "on your physical keyboard to show or change your passkeys"
@@ -284,6 +291,7 @@ PanelWindow {
     }
 
     Text {
+      textFormat: Text.PlainText
       visible: win.phase === "error"
       width: parent.width
       wrapMode: Text.WordWrap
@@ -304,6 +312,7 @@ PanelWindow {
       model: win.accounts
 
       Text {
+        textFormat: Text.PlainText
         visible: list.count === 0
         anchors.centerIn: parent
         text: "No passkeys yet. Register one on a site, e.g. webauthn.io."
@@ -320,9 +329,25 @@ PanelWindow {
         color: hover.hovered ? Util.alpha(win.fg, 0.10) : Util.alpha(win.fg, 0.05)
 
         HoverHandler { id: hover }
-        ToolTip.visible: hover.hovered && win.confirmDelete === ""
-        ToolTip.delay: 350
-        ToolTip.text: win.details(modelData)
+        // Site and account names come from the registering website, so the
+        // tooltip, like every text here, is plain text: no markup, no image
+        // tags that would make the shell fetch a URL.
+        ToolTip {
+          visible: hover.hovered && win.confirmDelete === ""
+          delay: 350
+          contentItem: Text {
+            textFormat: Text.PlainText
+            text: win.details(modelData)
+            color: win.fg
+            font.family: Style.font.family
+            font.pixelSize: 12
+          }
+          background: Rectangle {
+            color: Qt.lighter(win.bg, 1.3)
+            border.color: Util.alpha(win.fg, 0.3)
+            radius: 4
+          }
+        }
 
         Column {
           anchors.left: parent.left
@@ -332,6 +357,7 @@ PanelWindow {
           anchors.verticalCenter: parent.verticalCenter
           spacing: 3
           Text {
+            textFormat: Text.PlainText
             width: parent.width
             elide: Text.ElideRight
             text: modelData.rpId
@@ -341,6 +367,7 @@ PanelWindow {
             font.bold: true
           }
           Text {
+            textFormat: Text.PlainText
             width: parent.width
             elide: Text.ElideRight
             text: (modelData.userName || modelData.displayName || "—") + "  ·  " + (modelData.discoverable ? "passkey" : "security key") + (modelData.prf ? " · PRF" : "")
@@ -358,6 +385,7 @@ PanelWindow {
           spacing: 8
 
           Text {
+            textFormat: Text.PlainText
             visible: win.confirmDelete === modelData.id
             anchors.verticalCenter: parent.verticalCenter
             text: "Delete?"
@@ -371,6 +399,7 @@ PanelWindow {
             radius: 5
             color: win.confirmDelete === modelData.id ? Commons.Color.urgent : (trashArea.containsMouse ? Util.alpha(Commons.Color.urgent, 0.25) : "transparent")
             Text {
+              textFormat: Text.PlainText
               anchors.centerIn: parent
               // nf-md-trash_can_outline / check
               text: win.confirmDelete === modelData.id ? "󰄬" : "󰩺"
@@ -392,6 +421,7 @@ PanelWindow {
             radius: 5
             color: Util.alpha(win.fg, 0.1)
             Text {
+              textFormat: Text.PlainText
               anchors.centerIn: parent
               text: "󰅖"
               color: win.fg
@@ -408,6 +438,7 @@ PanelWindow {
     }
 
     Text {
+      textFormat: Text.PlainText
       visible: win.phase === "list"
       width: parent.width
       wrapMode: Text.WordWrap
