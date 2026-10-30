@@ -3,6 +3,7 @@ package main
 
 import (
 	"bufio"
+	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -10,11 +11,16 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"os/signal"
+	"path/filepath"
 	"strings"
+	"syscall"
 	"text/tabwriter"
 	"time"
 
 	"golang.org/x/sys/unix"
+
+	"github.com/Divanyx/omapasskey/internal/tpm"
 
 	"github.com/Divanyx/omapasskey/internal/admin"
 	"github.com/Divanyx/omapasskey/internal/ctap2"
@@ -136,7 +142,24 @@ func readSecret(prompt string) (string, error) {
 	if err := unix.IoctlSetTermios(fd, unix.TCSETS, &quiet); err != nil {
 		return "", err
 	}
-	defer unix.IoctlSetTermios(fd, unix.TCSETS, old)
+	// Ctrl-C must not leave the terminal without echo.
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+	stop := make(chan struct{})
+	go func() {
+		select {
+		case <-sigs:
+			unix.IoctlSetTermios(fd, unix.TCSETS, old)
+			fmt.Fprintln(tty)
+			os.Exit(130)
+		case <-stop:
+		}
+	}()
+	defer func() {
+		close(stop)
+		signal.Stop(sigs)
+		unix.IoctlSetTermios(fd, unix.TCSETS, old)
+	}()
 	fmt.Fprint(tty, prompt)
 	line, err := bufio.NewReader(tty).ReadString('\n')
 	fmt.Fprintln(tty)
@@ -232,7 +255,7 @@ func cmdList() error {
 		if account == "" {
 			account = a.DisplayName
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", hex.EncodeToString(a.ID[:6]), a.RPID, account, kind,
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", hex.EncodeToString(a.ID[:min(6, len(a.ID))]), a.RPID, account, kind,
 			time.Unix(a.Created, 0).Format("02-01-2006 15:04"))
 	}
 	return w.Flush()
@@ -475,13 +498,24 @@ func cmdSetKeys(spec string) error {
 		return fmt.Errorf("no physical keyboard has all of %s", strings.Join(combo.Labels, " + "))
 	}
 	data, err := os.ReadFile(configPath)
-	if err != nil {
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
+	}
+	mode := os.FileMode(0o644)
+	if fi, err := os.Stat(configPath); err == nil {
+		mode = fi.Mode().Perm()
 	}
 	var out []string
 	replaced := false
 	for _, l := range strings.Split(strings.TrimRight(string(data), "\n"), "\n") {
-		if k, _, ok := strings.Cut(l, "="); ok && strings.TrimSpace(k) == "confirm_keys" {
+		if l == "" && len(data) == 0 {
+			continue
+		}
+		body := l
+		if i := strings.Index(body, "#"); i >= 0 {
+			body = body[:i]
+		}
+		if k, _, ok := strings.Cut(body, "="); ok && strings.TrimSpace(k) == "confirm_keys" {
 			if !replaced {
 				out = append(out, "confirm_keys = "+combo.Spec)
 				replaced = true
@@ -493,15 +527,15 @@ func cmdSetKeys(spec string) error {
 	if !replaced {
 		out = append(out, "# Keys pressed together to confirm a passkey use (2-4, physical keyboard).", "confirm_keys = "+combo.Spec)
 	}
-	tmp := configPath + ".new"
-	if err := os.WriteFile(tmp, []byte(strings.Join(out, "\n")+"\n"), 0o644); err != nil {
-		return err
-	}
-	if err := os.Rename(tmp, configPath); err != nil {
+	if err := writeFileAtomic(configPath, []byte(strings.Join(out, "\n")+"\n"), mode); err != nil {
 		return err
 	}
 	if out, err := exec.Command("systemctl", "restart", "omapasskeyd").CombinedOutput(); err != nil {
-		return fmt.Errorf("restarting the service: %v %s", err, out)
+		// Put the old file back so the configuration matches what runs.
+		if data != nil {
+			writeFileAtomic(configPath, data, mode)
+		}
+		return fmt.Errorf("restarting the service failed, the old setting is back: %v %s", err, out)
 	}
 	fmt.Printf("Confirm with: %s\n", strings.Join(combo.Labels, " + "))
 	return nil
@@ -511,27 +545,64 @@ func cmdTPMProtect() error {
 	if err := needRoot(); err != nil {
 		return err
 	}
-	fmt.Println(`This gives your TPM's lockout hierarchy a random password and shows it once.
+	material := make([]byte, 24)
+	if _, err := rand.Read(material); err != nil {
+		return err
+	}
+	code := string(tpm.AuthValue(material))
+	fmt.Println(`This gives your TPM's lockout hierarchy a random password.
 
 Without it, anyone with root can reset the TPM's wrong-PIN counter and keep
 guessing your passkey PIN. With it, only the holder of this code can.
 
 Keep the code offline (password manager, paper). It is not stored anywhere.
 You need it only to reset the TPM's lockout from the operating system; the
-firmware's "Clear TPM" still works without it (and erases all TPM keys).`)
-	fmt.Print("\nType 'protect' to continue: ")
+firmware's "Clear TPM" still works without it (and erases all TPM keys).
+
+Your recovery code — write it down now, it is set only after you confirm:`)
+	fmt.Printf("\n    %s\n\n", code)
+	fmt.Print("Type the last 6 characters of the code to set it: ")
 	line, _ := bufio.NewReader(os.Stdin).ReadString('\n')
-	if strings.TrimSpace(line) != "protect" {
-		return errors.New("nothing was changed")
+	if strings.TrimSpace(line) != code[len(code)-6:] {
+		return errors.New("that did not match; nothing was changed")
 	}
-	resp, err := call(admin.Request{Cmd: "tpm-protect"})
+	if _, err := call(admin.Request{Cmd: "tpm-protect", Code: code}); err != nil {
+		return err
+	}
+	fmt.Println("Done: the TPM's PIN guess limit now holds against root as well.")
+	return nil
+}
+
+// writeFileAtomic replaces path with data: exclusive temp file in the same
+// directory, fsync, chmod, rename, fsync the directory.
+func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, ".omapasskey-*.tmp")
 	if err != nil {
 		return err
 	}
-	var out struct {
-		Code string `json:"code"`
+	defer os.Remove(tmp.Name())
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
 	}
-	json.Unmarshal(resp.Data, &out)
-	fmt.Printf("\nTPM lockout recovery code (write it down now):\n\n    %s\n\n", out.Code)
+	if err := tmp.Chmod(mode); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp.Name(), path); err != nil {
+		return err
+	}
+	if d, err := os.Open(dir); err == nil {
+		d.Sync()
+		d.Close()
+	}
 	return nil
 }

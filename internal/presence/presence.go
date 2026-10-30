@@ -196,7 +196,20 @@ func (w *Watcher) Wait(ctx context.Context) error {
 		if _, err := unix.Poll(fds, int(wait/time.Millisecond)+1); err != nil && !errors.Is(err, unix.EINTR) {
 			return err
 		}
+		alive := 0
+		for i := range fds {
+			if fds[i].Fd >= 0 {
+				alive++
+			}
+		}
+		if alive == 0 {
+			// Every keyboard was unplugged during the prompt.
+			return ErrNoKeyboard
+		}
 		for i, d := range devs {
+			if fds[i].Fd < 0 {
+				continue
+			}
 			if fds[i].Revents&(unix.POLLERR|unix.POLLHUP|unix.POLLNVAL) != 0 {
 				// Unplugged; the others keep working.
 				fds[i].Fd = -1

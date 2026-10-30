@@ -2,6 +2,7 @@ package ctap2
 
 import (
 	"bytes"
+	"time"
 
 	"github.com/Divanyx/omapasskey/internal/pinuv"
 	"github.com/Divanyx/omapasskey/internal/vault"
@@ -49,10 +50,14 @@ func (a *Authenticator) credentialManagement(r *request, params []byte) (any, er
 	// authenticated "begin" call revealed, and only while the token that
 	// authorised it is still valid (expiring it also drops the pages).
 	if sub == cmEnumerateRPsNext || sub == cmEnumerateCredsNext {
-		if t := a.current(); t == nil || t.permissions&permCM == 0 {
+		t := a.current()
+		if t == nil || t.permissions&permCM == 0 {
 			a.enumRPs, a.enumCreds = nil, nil
 			return nil, Error(ErrNotAllowed)
 		}
+		// Paging is use of the token: it keeps the rolling timer going.
+		t.lastUse = time.Now()
+		t.timer.Reset(tokenInitialLimit)
 	}
 	switch sub {
 	case cmEnumerateRPsNext:

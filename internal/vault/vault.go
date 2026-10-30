@@ -186,9 +186,22 @@ func Open(path string, be Backend) (*Vault, error) {
 	return v, nil
 }
 
-// save writes the state atomically: temp file, fsync, rename, fsync dir.
-func (v *Vault) save() error {
-	data, err := json.MarshalIndent(&v.st, "", " ")
+// commit writes next and only then makes it the state in memory, so a
+// failed write leaves memory and disk agreeing on the old state.
+func (v *Vault) commit(next state) error {
+	if err := v.write(&next); err != nil {
+		return err
+	}
+	v.st = next
+	return nil
+}
+
+// save writes the current state.
+func (v *Vault) save() error { return v.write(&v.st) }
+
+// write stores a state atomically: temp file, fsync, rename, fsync dir.
+func (v *Vault) write(st *state) error {
+	data, err := json.MarshalIndent(st, "", " ")
 	if err != nil {
 		return err
 	}
@@ -272,8 +285,9 @@ func (v *Vault) SetPIN(pinHash []byte, codePoints int) error {
 	if err != nil {
 		return err
 	}
-	v.st.PIN = ps
-	return v.save()
+	next := v.st
+	next.PIN = ps
+	return v.commit(next)
 }
 
 func (v *Vault) sealSecret(g, pinHash []byte, codePoints int) (*pinState, error) {
@@ -304,10 +318,32 @@ func (v *Vault) ConsumePINRetry() (int, error) {
 	if v.st.PIN == nil {
 		return 0, ErrPINNotSet
 	}
+	before := v.st.PIN.Retries
 	if v.st.PIN.Retries > 0 {
 		v.st.PIN.Retries--
 	}
-	return v.st.PIN.Retries, v.save()
+	if err := v.save(); err != nil {
+		v.st.PIN.Retries = before
+		return before, err
+	}
+	return v.st.PIN.Retries, nil
+}
+
+// RefundPINRetry gives back a retry that was spent on an attempt the TPM
+// never judged (lockout engaged, transient TPM error): only a wrong PIN may
+// cost one.
+func (v *Vault) RefundPINRetry() error {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if v.st.PIN == nil || v.st.PIN.Retries >= MaxPINRetries {
+		return nil
+	}
+	v.st.PIN.Retries++
+	if err := v.save(); err != nil {
+		v.st.PIN.Retries--
+		return err
+	}
+	return nil
 }
 
 // Unlock checks a PIN hash against the TPM and returns the unlocked secrets.
@@ -371,16 +407,16 @@ func (v *Vault) ChangePIN(oldHash, newHash []byte, codePoints int) error {
 	if err != nil {
 		return err
 	}
-	v.st.PIN = ps
-	return v.save()
+	next := v.st
+	next.PIN = ps
+	return v.commit(next)
 }
 
 // Reset forgets the PIN and every credential.
 func (v *Vault) Reset() error {
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	v.st = state{Version: stateVersion}
-	return v.save()
+	return v.commit(state{Version: stateVersion})
 }
 
 // Counts returns the number of discoverable and of all credentials.
@@ -514,20 +550,22 @@ func (v *Vault) NewCredential(u *Unlocked, a *Account, discoverable bool, credPr
 
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	if discoverable {
-		kept := v.st.Credentials[:0]
+	next := v.st
+	next.Credentials = make([]*Credential, 0, len(v.st.Credentials)+1)
+	if !discoverable {
+		next.Credentials = append(next.Credentials, v.st.Credentials...)
+	} else {
 		for _, old := range v.st.Credentials {
 			if old.Discoverable && bytes.Equal(old.RPIDHash, c.RPIDHash) {
 				if oa, err := v.accountLocked(u, old); err == nil && bytes.Equal(oa.UserID, a.UserID) {
 					continue // overwritten by the new credential
 				}
 			}
-			kept = append(kept, old)
+			next.Credentials = append(next.Credentials, old)
 		}
-		v.st.Credentials = kept
 	}
-	v.st.Credentials = append(v.st.Credentials, c)
-	if err := v.save(); err != nil {
+	next.Credentials = append(next.Credentials, c)
+	if err := v.commit(next); err != nil {
 		return nil, err
 	}
 	return c, nil
@@ -571,8 +609,13 @@ func (v *Vault) UpdateAccount(u *Unlocked, id []byte, name, displayName string) 
 		if err != nil {
 			return err
 		}
+		old := c.Sealed
 		c.Sealed = sealed
-		return v.save()
+		if err := v.save(); err != nil {
+			c.Sealed = old
+			return err
+		}
+		return nil
 	}
 	return ErrNotFound
 }
@@ -583,8 +626,11 @@ func (v *Vault) Delete(id []byte) error {
 	defer v.mu.Unlock()
 	for i, c := range v.st.Credentials {
 		if bytes.Equal(c.ID, id) {
-			v.st.Credentials = append(v.st.Credentials[:i], v.st.Credentials[i+1:]...)
-			return v.save()
+			next := v.st
+			next.Credentials = make([]*Credential, 0, len(v.st.Credentials)-1)
+			next.Credentials = append(next.Credentials, v.st.Credentials[:i]...)
+			next.Credentials = append(next.Credentials, v.st.Credentials[i+1:]...)
+			return v.commit(next)
 		}
 	}
 	return ErrNotFound

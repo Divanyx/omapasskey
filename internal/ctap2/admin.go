@@ -104,6 +104,7 @@ func (a *Authenticator) adminUnlock(pin string) (*vault.Unlocked, error) {
 	}
 	h := sha256.Sum256([]byte(pin))
 	u, err := a.vault.Unlock(h[:16])
+	clear(h[:])
 	switch {
 	case errors.Is(err, vault.ErrWrongPIN):
 		a.consecutive++
@@ -118,8 +119,10 @@ func (a *Authenticator) adminUnlock(pin string) (*vault.Unlocked, error) {
 		}
 		return nil, ErrAdminWrongPIN
 	case errors.Is(err, vault.ErrLockout):
+		a.vault.RefundPINRetry()
 		return nil, ErrAdminLockout
 	case err != nil:
+		a.vault.RefundPINRetry()
 		return nil, ErrAdminInternal
 	}
 	a.consecutive = 0
@@ -143,10 +146,14 @@ func (a *Authenticator) AdminChangePIN(oldPIN, newPIN string) error {
 	}
 	u.Wipe()
 	oldHash := sha256.Sum256([]byte(oldPIN))
-	if err := a.vault.ChangePIN(oldHash[:16], newHash, n); err != nil {
+	err = a.vault.ChangePIN(oldHash[:16], newHash, n)
+	clear(oldHash[:])
+	clear(newHash)
+	if err != nil {
 		return ErrAdminInternal
 	}
 	a.stopToken()
+	a.dropPending()
 	return nil
 }
 
@@ -228,34 +235,74 @@ func (a *Authenticator) AdminReset() error {
 	return nil
 }
 
-// userUnlock is adminUnlock for an ordinary user: it first asks for the
-// physical confirmation, so neither the passkey list nor a PIN try can be had
-// by software alone.
-func (a *Authenticator) userUnlock(ctx context.Context, pin string) (*vault.Unlocked, error) {
-	if !a.vault.PINSet() {
-		return nil, ErrAdminNoPIN
-	}
-	if a.vault.PINRetries() == 0 {
-		return nil, ErrAdminBlocked
-	}
-	if a.authBlocked() {
-		return nil, ErrAdminLockout
-	}
-	r := &request{ctx: ctx, status: func(byte) {}}
-	if err := a.confirm(r, Prompt{Op: "manage"}, false); err != nil {
-		return nil, ErrNotConfirmed
-	}
-	return a.adminUnlock(pin)
-}
+// Errors of the passkey manager.
+var (
+	ErrNotConfirmed = errors.New("not confirmed on the keyboard")
+	ErrManageBusy   = errors.New("busy with another request; try again in a moment")
+	ErrManageQuiet  = errors.New("the last request was not confirmed; wait a few seconds")
+)
 
-// ErrNotConfirmed means the key combination was not pressed.
-var ErrNotConfirmed = errors.New("not confirmed on the keyboard")
+// manageQuietTime keeps a refused or ignored manager prompt from being
+// re-raised at once, so a program cannot keep the prompt on screen.
+const manageQuietTime = 10 * time.Second
+
+// manageGate asks for the key press for a passkey-manager request. It runs
+// outside a.mu, so browsers are never blocked by it, and any browser request
+// that needs a key press withdraws it.
+func (a *Authenticator) manageGate(ctx context.Context) error {
+	a.mu.Lock()
+	switch {
+	case !a.vault.PINSet():
+		a.mu.Unlock()
+		return ErrAdminNoPIN
+	case a.vault.PINRetries() == 0:
+		a.mu.Unlock()
+		return ErrAdminBlocked
+	case a.authBlocked():
+		a.mu.Unlock()
+		return ErrAdminLockout
+	}
+	a.mu.Unlock()
+
+	a.pmu.Lock()
+	if time.Now().Before(a.manageQuiet) {
+		a.pmu.Unlock()
+		return ErrManageQuiet
+	}
+	mctx, cancel := context.WithCancel(ctx)
+	a.cancelManage = cancel
+	a.pmu.Unlock()
+	defer func() {
+		a.pmu.Lock()
+		a.cancelManage = nil
+		a.pmu.Unlock()
+		cancel()
+	}()
+
+	if err := a.confirm(&request{ctx: mctx, status: func(byte) {}}, Prompt{Op: "manage"}, false); err != nil {
+		a.pmu.Lock()
+		a.manageQuiet = time.Now().Add(manageQuietTime)
+		a.pmu.Unlock()
+		return ErrNotConfirmed
+	}
+	if ctx.Err() != nil {
+		return ErrNotConfirmed
+	}
+	return nil
+}
 
 // UserList lists the passkeys after the PIN and a key press.
 func (a *Authenticator) UserList(ctx context.Context, pin string) ([]AccountInfo, error) {
+	if !a.manage.TryLock() {
+		return nil, ErrManageBusy
+	}
+	defer a.manage.Unlock()
+	if err := a.manageGate(ctx); err != nil {
+		return nil, err
+	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	u, err := a.userUnlock(ctx, pin)
+	u, err := a.adminUnlock(pin)
 	if err != nil {
 		return nil, err
 	}
@@ -266,9 +313,16 @@ func (a *Authenticator) UserList(ctx context.Context, pin string) ([]AccountInfo
 // UserDelete deletes one passkey after the PIN and a key press and returns
 // the remaining list.
 func (a *Authenticator) UserDelete(ctx context.Context, pin string, id []byte) ([]AccountInfo, error) {
+	if !a.manage.TryLock() {
+		return nil, ErrManageBusy
+	}
+	defer a.manage.Unlock()
+	if err := a.manageGate(ctx); err != nil {
+		return nil, err
+	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	u, err := a.userUnlock(ctx, pin)
+	u, err := a.adminUnlock(pin)
 	if err != nil {
 		return nil, err
 	}

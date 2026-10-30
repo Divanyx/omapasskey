@@ -163,7 +163,7 @@ PanelWindow {
           model: win.keycaps
 
           Item {
-            width: modelData === "+" ? plus.implicitWidth : Math.max(keyLabel.implicitWidth + Style.space(28), Style.space(110))
+            width: modelData === "+" ? plus.implicitWidth : Math.max(keyLabel.implicitWidth + Style.space(28), win.keyLabels.length > 2 ? 0 : Style.space(110))
             height: Style.space(40)
 
             Rectangle {
@@ -237,12 +237,15 @@ PanelWindow {
           height: parent.height
           radius: parent.radius
           color: win.accent
-          width: parent.width
+          // A share of the track, so the bar is right whatever the track's
+          // width is when the prompt appears.
+          property real remaining: 1
+          width: parent.width * remaining
 
-          NumberAnimation on width {
+          NumberAnimation on remaining {
             id: countdown
             running: false
-            from: track.width
+            from: 1
             to: 0
           }
         }
@@ -252,6 +255,7 @@ PanelWindow {
           function onPromptStartedChanged() {
             if (!win.service || !win.service.prompt) return
             countdown.stop()
+            bar.remaining = 1
             countdown.duration = Math.max(1000, Number(win.service.prompt.timeoutMs) || 30000)
             countdown.start()
           }

@@ -6,7 +6,6 @@ package tpm
 
 import (
 	"bytes"
-	"crypto/rand"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -434,24 +433,23 @@ func pad32(b []byte) []byte {
 // ErrLockoutAuthSet means the lockout hierarchy already has a password.
 var ErrLockoutAuthSet = errors.New("tpm: the lockout authorization is already set")
 
-// ProtectLockout gives the TPM's lockout hierarchy a random password and
-// returns it. With an empty lockout authorization anyone with TPM access
-// (root) can reset the dictionary-attack counter and guess PINs without
-// limit; with this password set, only its holder can. The password is not
-// stored anywhere: it is a recovery code for the user to keep offline.
-func (k *TPM) ProtectLockout() (string, error) {
+// ProtectLockout sets the TPM's lockout authorization to code, which must
+// come from AuthValue (32 characters, no zero bytes). With an empty lockout
+// authorization anyone with TPM access (root) can reset the dictionary-attack
+// counter and guess PINs without limit; with it set, only the holder of the
+// code can. The caller generates and shows the code before it is set, so it
+// can never be lost on the way back; it is not stored anywhere.
+func (k *TPM) ProtectLockout(code []byte) error {
+	if len(code) != 32 || checkAuth(code) != nil {
+		return errors.New("tpm: the lockout code must be 32 characters from AuthValue")
+	}
 	info, err := k.Info()
 	if err != nil {
-		return "", err
+		return err
 	}
 	if info.LockoutAuthSet {
-		return "", ErrLockoutAuthSet
+		return ErrLockoutAuthSet
 	}
-	material := make([]byte, 24)
-	if _, err := rand.Read(material); err != nil {
-		return "", err
-	}
-	code := AuthValue(material)
 	k.mu.Lock()
 	defer k.mu.Unlock()
 	_, err = tpm2.HierarchyChangeAuth{
@@ -464,8 +462,5 @@ func (k *TPM) ProtectLockout() (string, error) {
 		},
 		NewAuth: tpm2.TPM2BAuth{Buffer: code},
 	}.Execute(k.t)
-	if err != nil {
-		return "", err
-	}
-	return string(code), nil
+	return err
 }

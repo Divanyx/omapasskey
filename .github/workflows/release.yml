@@ -19,6 +19,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: "1.27.1"
@@ -28,8 +29,10 @@ jobs:
           v="$(sed -n 's/^VERSION="\(.*\)"$/\1/p' setup/omapasskey-setup)"
           test "v$v" = "$GITHUB_REF_NAME"
           grep -q "\"version\": \"$v\"" manifest.json
+      - name: The tag is on main
+        run: git merge-base --is-ancestor "$GITHUB_SHA" origin/main
       - name: Test
-        run: CGO_ENABLED=1 go test -count=1 ./...
+        run: CGO_ENABLED=1 go test -race -count=1 ./...
       - name: Build
         run: ./scripts/build-release.sh
       - name: Rebuilt binaries are bit-identical to the pinned checksums

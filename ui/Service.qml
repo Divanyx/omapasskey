@@ -60,7 +60,7 @@ Item {
   readonly property string tooltip: !installChecked ? "Omapasskey"
     : !installed ? "Omapasskey — not set up yet: click to install the TPM passkey service"
     : !connected ? "Omapasskey — the service is not running: click to repair it"
-    : waiting ? "Omapasskey — " + describe(prompt) + ": press Left Shift + Right Shift"
+    : waiting ? "Omapasskey — " + describe(prompt) + ": press " + (confirmKeys.length ? confirmKeys.join(" + ") : "Left Shift + Right Shift")
     : !pinSet ? "Omapasskey — no PIN yet: click to set one"
     : updateAvailable ? "Omapasskey — service " + version + ", plugin " + pluginVersion + ": click to update"
     : pinRetries < 8 ? "Omapasskey — ready (" + pinRetries + " of 8 PIN tries left)"
@@ -110,6 +110,8 @@ Item {
         outcomePrompt = prompt
         outcome = String(m.result || "")
         prompt = null
+        // Errors stay long enough to be read; a confirmation just flashes.
+        outcomeTimer.interval = outcome === "confirmed" ? 1100 : 4000
         outcomeTimer.restart()
       }
       break
@@ -134,15 +136,15 @@ Item {
     if (s.device !== undefined) device = String(s.device || "")
     if (s.confirmSpec !== undefined) confirmSpec = String(s.confirmSpec || "")
     if (s.confirmKeys !== undefined) confirmKeys = s.confirmKeys || []
-    maybeApplyKeys()
   }
 
   function startPrompt(p) {
     if (!p) return
     outcome = ""
     outcomeTimer.stop()
-    promptStarted = Date.now()
+    // prompt first: the countdown reacts to promptStarted and reads prompt.
     prompt = p
+    promptStarted = Date.now()
   }
 
   // ------------------------------------------------------------ actions
@@ -174,11 +176,36 @@ Item {
   function normalizeKeys(spec) {
     return String(spec || "").toLowerCase().split(/[+, ]+/).filter(function(k) { return k.length > 0 }).join("+")
   }
+  // Only a change made in the settings during this session is applied: the
+  // value the shell starts with is taken as given, so a combination set on
+  // the command line is never reverted and nothing pops up at login.
+  property string seenKeys: ""
+  property bool keysSeeded: false
+  function validKeys(spec) {
+    var parts = spec.split("+")
+    if (parts.length < 2 || parts.length > 4) return false
+    for (var i = 0; i < parts.length; i++)
+      if (!/^[a-z0-9]{1,12}$/.test(parts[i]) || parts[i] === "esc") return false
+    return true
+  }
   function maybeApplyKeys() {
     var want = normalizeKeys(settings.confirmKeys)
-    if (!connected || want === "" || confirmSpec === "" || want === confirmSpec || want === requestedKeys) return
-    requestedKeys = want
-    terminal("sudo omapasskey keys set " + quote(want))
+    if (!keysSeeded) { keysSeeded = true; seenKeys = want; return }
+    if (want === seenKeys) return
+    seenKeys = want
+    if (!connected || !validKeys(want) || want === confirmSpec) return
+    keysTimer.restart()
+  }
+  // Settings fields can update on every keystroke; wait until typing stops.
+  Timer {
+    id: keysTimer
+    interval: 1500
+    onTriggered: {
+      var want = root.seenKeys
+      if (want === root.confirmSpec || want === root.requestedKeys || !root.validKeys(want)) return
+      root.requestedKeys = want
+      root.terminal("sudo omapasskey keys set " + root.quote(want))
+    }
   }
   function changePin() { terminal("sudo omapasskey pin change") }
 
@@ -208,7 +235,13 @@ Item {
     }
     onConnectionStateChanged: {
       root.connected = socket.connected
-      if (!socket.connected) root.prompt = null
+      if (!socket.connected) {
+        root.prompt = null
+        root.outcome = ""
+        root.outcomePrompt = null
+        root.note = null
+        root.winking = false
+      }
     }
   }
 

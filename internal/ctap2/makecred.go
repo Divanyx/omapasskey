@@ -5,7 +5,6 @@ import (
 	"encoding/asn1"
 	"encoding/binary"
 	"math/big"
-	"time"
 
 	"github.com/fxamacker/cbor/v2"
 
@@ -133,7 +132,6 @@ func (a *Authenticator) makeCredential(r *request, params []byte) (any, error) {
 		if err := a.confirm(r, Prompt{Op: "select"}, false); err != nil {
 			return nil, err
 		}
-		a.selectedAt = time.Now()
 		if a.vault.PINSet() {
 			return nil, Error(ErrPINInvalid)
 		}

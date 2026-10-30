@@ -10,6 +10,7 @@ import (
 	"math/big"
 	"testing"
 
+	"github.com/google/go-tpm/tpm2"
 	"github.com/google/go-tpm/tpm2/transport/simulator"
 )
 
@@ -114,18 +115,18 @@ func TestHMACIsStable(t *testing.T) {
 
 func TestProtectLockout(t *testing.T) {
 	k := openSim(t)
-	code, err := k.ProtectLockout()
-	if err != nil {
-		t.Fatal(err)
+	if err := k.ProtectLockout([]byte("short")); err == nil {
+		t.Fatal("a malformed code was accepted")
 	}
-	if len(code) != 32 {
-		t.Fatalf("code %q", code)
+	code := AuthValue(bytes.Repeat([]byte{7}, 24))
+	if err := k.ProtectLockout(code); err != nil {
+		t.Fatal(err)
 	}
 	info, err := k.Info()
 	if err != nil || !info.LockoutAuthSet {
 		t.Fatalf("lockout auth not set: %+v %v", info, err)
 	}
-	if _, err := k.ProtectLockout(); !errors.Is(err, ErrLockoutAuthSet) {
+	if err := k.ProtectLockout(code); !errors.Is(err, ErrLockoutAuthSet) {
 		t.Fatalf("second protect: %v", err)
 	}
 	// Sealing still works afterwards.
@@ -135,5 +136,61 @@ func TestProtectLockout(t *testing.T) {
 	}
 	if _, err := k.Unseal(b, []byte("auth-value")); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// Review finding (marketplace #13302): with an empty lockout authorization,
+// root can reset the dictionary-attack counter and keep guessing. This
+// replays that attack (TPM2_DictionaryAttackLockReset with an empty
+// password) before and after ProtectLockout.
+func TestLockoutResetAttack(t *testing.T) {
+	k := openSim(t)
+	auth := []byte("pin-derived-auth")
+	b, err := k.Seal([]byte("secret"), auth)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Three wrong guesses count against the TPM.
+	for i := 0; i < 3; i++ {
+		k.Unseal(b, []byte("wrong"))
+	}
+	before, _ := k.Info()
+	if before.LockoutCounter == 0 {
+		t.Fatal("wrong guesses did not count")
+	}
+	reset := func() error {
+		k.mu.Lock()
+		defer k.mu.Unlock()
+		// TPM2_DictionaryAttackLockReset(TPM_RH_LOCKOUT) with an empty
+		// password session; go-tpm v0.9.8 has no wrapper for it.
+		cmd := []byte{0x80, 0x02, 0x00, 0x00, 0x00, 0x1B, 0x00, 0x00, 0x01, 0x39,
+			0x40, 0x00, 0x00, 0x0A, 0x00, 0x00, 0x00, 0x09,
+			0x40, 0x00, 0x00, 0x09, 0x00, 0x00, 0x00, 0x00, 0x00}
+		rsp, err := k.t.Send(cmd)
+		if err != nil {
+			return err
+		}
+		if rc := tpm2.TPMRC(uint32(rsp[6])<<24 | uint32(rsp[7])<<16 | uint32(rsp[8])<<8 | uint32(rsp[9])); rc != 0 {
+			return rc
+		}
+		return nil
+	}
+	// The attack works on an unprotected TPM ...
+	if err := reset(); err != nil {
+		t.Fatalf("reset with empty lockout auth failed unexpectedly: %v", err)
+	}
+	if info, _ := k.Info(); info.LockoutCounter != 0 {
+		t.Fatalf("counter not reset: %d", info.LockoutCounter)
+	}
+	// ... and stops working once the lockout has a password.
+	if err := k.ProtectLockout(AuthValue(bytes.Repeat([]byte{9}, 24))); err != nil {
+		t.Fatal(err)
+	}
+	k.Unseal(b, []byte("wrong"))
+	if err := reset(); err == nil {
+		t.Fatal("root could still reset the counter after ProtectLockout")
+	}
+	if info, _ := k.Info(); info.LockoutCounter == 0 {
+		t.Fatal("the counter was reset after ProtectLockout")
 	}
 }

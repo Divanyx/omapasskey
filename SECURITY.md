@@ -59,6 +59,10 @@ The confirm-key combination (default Left Shift + Right Shift) is set in the roo
 - `authenticatorReset` and `setPIN` require the physical key press; reset is allowed at any time, not only within 10 s of power-up.
 - Three consecutive wrong PINs block PIN entry for 30 s (a virtual key cannot be unplugged to "power cycle" it).
 
+### Installation trust
+
+The setup script runs from the plugin folder, which belongs to you, and uses sudo. It checks the two downloaded binaries against SHA-256 sums pinned in the same folder, and the published binaries are reproducible and carry signed build provenance. But a program that can already write to your plugin folder could change the script, the unit file or the pinned sums before you run it. Install and update only from a session you trust; to check independently, compare the installed binaries with the release (`gh attestation verify /usr/local/lib/omapasskey/omapasskeyd --repo Divanyx/omapasskey`) and the unit file with the tagged source. Once installed, nothing in the plugin folder is trusted by the service.
+
 ### Known limits
 
 - The TPM's dictionary-attack lockout limits PIN guesses by root only if the TPM's lockout authorization is set. Many TPMs ship with it empty; then root can reset the counter (TPM2_DictionaryAttackLockReset) and keep guessing against the TPM at its speed. `sudo omapasskey tpm protect` sets a random lockout password (shown once, never stored); `omapasskey doctor` and `omapasskey status` report the state, and the service logs a warning at start.

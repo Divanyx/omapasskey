@@ -82,7 +82,6 @@ func run(configPath, statePath, tpmPath, uhidPath, runDir string) error {
 	// Nobody may ptrace this process or read its memory through /proc, and
 	// it never writes core dumps: it holds unlocked secrets for seconds.
 	unix.Prctl(unix.PR_SET_DUMPABLE, 0, 0, 0, 0)
-	unix.Setrlimit(unix.RLIMIT_CORE, &unix.Rlimit{})
 	unix.Umask(0o077)
 
 	cfg, err := loadConfig(configPath)
@@ -119,7 +118,7 @@ func run(configPath, statePath, tpmPath, uhidPath, runDir string) error {
 			Device: device.Load().(string), Keyboards: len(watcher.Keyboards()),
 			Prompt:      pres.Current(),
 			ConfirmSpec: cfg.combo.Spec, ConfirmKeys: cfg.combo.Labels,
-			LockoutProtected: lockoutProtected(t),
+			LockoutProtected: lockoutCache.Load(),
 		}
 	})
 	events := &eventBridge{hub: hub, snapshot: func() any {
@@ -213,6 +212,10 @@ func firmware() uint64 {
 func pump(dev *uhid.Device, server *ctaphid.Server) error {
 	for {
 		ev, err := dev.ReadEvent()
+		if errors.Is(err, uhid.ErrBadEvent) {
+			slog.Warn("ignoring a malformed uhid event", "err", err)
+			continue
+		}
 		if err != nil {
 			if errors.Is(err, os.ErrClosed) {
 				return nil
@@ -288,8 +291,13 @@ func loadConfig(path string) (*config, error) {
 	defer f.Close()
 	sc := bufio.NewScanner(f)
 	for line := 1; sc.Scan(); line++ {
-		text := strings.TrimSpace(sc.Text())
-		if text == "" || strings.HasPrefix(text, "#") {
+		text := sc.Text()
+		// A "#" starts a comment, also after a value.
+		if i := strings.Index(text, "#"); i >= 0 {
+			text = text[:i]
+		}
+		text = strings.TrimSpace(text)
+		if text == "" {
 			continue
 		}
 		key, value, ok := strings.Cut(text, "=")
@@ -485,8 +493,11 @@ func serveAdmin(conn net.Conn, auth *ctap2.Authenticator, t *tpm.TPM, w *presenc
 	case "reset":
 		reply(nil, auth.AdminReset())
 	case "tpm-protect":
-		code, err := t.ProtectLockout()
-		reply(map[string]string{"code": code}, err)
+		err := t.ProtectLockout([]byte(req.Code))
+		if err == nil {
+			lockoutCache.Store(true)
+		}
+		reply(nil, err)
 	default:
 		reply(nil, errors.New("unknown command"))
 	}
@@ -523,7 +534,7 @@ func serveManage(conn net.Conn, auth *ctap2.Authenticator, allowed func(uint32) 
 	if uid, ok := status.PeerUID(conn); !ok || (uid != 0 && !allowed(uid)) {
 		return
 	}
-	conn.SetDeadline(time.Now().Add(90 * time.Second))
+	conn.SetDeadline(time.Now().Add(manageDeadline))
 	line, err := bufio.NewReader(io.LimitReader(conn, 4096)).ReadBytes('\n')
 	if err != nil {
 		return
@@ -547,9 +558,15 @@ func serveManage(conn net.Conn, auth *ctap2.Authenticator, allowed func(uint32) 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go func() {
-		buf := make([]byte, 1)
-		conn.Read(buf)
-		cancel()
+		// Anything after the request line is ignored; only the client
+		// going away cancels the request.
+		buf := make([]byte, 64)
+		for {
+			if _, err := conn.Read(buf); err != nil {
+				cancel()
+				return
+			}
+		}
 	}()
 	switch req.Cmd {
 	case "list":
@@ -561,7 +578,18 @@ func serveManage(conn net.Conn, auth *ctap2.Authenticator, allowed func(uint32) 
 	}
 }
 
+// lockoutCache holds whether the TPM's lockout has a password. It is read
+// once at start and after `tpm protect`, so a client reconnecting in a loop
+// cannot make the status socket generate TPM traffic.
+var lockoutCache atomic.Bool
+
 func lockoutProtected(t *tpm.TPM) bool {
 	info, err := t.Info()
-	return err == nil && info.LockoutAuthSet
+	ok := err == nil && info.LockoutAuthSet
+	lockoutCache.Store(ok)
+	return ok
 }
+
+// manageDeadline covers the longest key-press wait (presence_timeout is at
+// most 120 s) plus the TPM work after it.
+const manageDeadline = 150 * time.Second

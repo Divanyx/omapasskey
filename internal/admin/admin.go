@@ -22,6 +22,7 @@ type Request struct {
 	PIN    string `json:"pin,omitempty"`
 	NewPIN string `json:"newPin,omitempty"`
 	ID     []byte `json:"id,omitempty"`
+	Code   string `json:"code,omitempty"`
 }
 
 // Response is the answer.

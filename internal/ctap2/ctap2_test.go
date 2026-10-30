@@ -10,6 +10,7 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"math/big"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -45,10 +46,11 @@ func (e *statusEvents) Wink()                         {}
 func (e *statusEvents) StateChanged()                 { e.a.AdminStatus() }
 
 type harness struct {
-	t    *testing.T
-	a    *Authenticator
-	pres *fakePresence
-	v    *vault.Vault
+	t         *testing.T
+	a         *Authenticator
+	pres      *fakePresence
+	v         *vault.Vault
+	vaultPath string
 }
 
 func newHarness(t *testing.T) *harness {
@@ -70,7 +72,8 @@ func newHarness(t *testing.T) *harness {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { k.Close() })
-	v, err := vault.Open(filepath.Join(t.TempDir(), "state.json"), k)
+	vaultPath := filepath.Join(t.TempDir(), "state.json")
+	v, err := vault.Open(vaultPath, k)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,7 +85,7 @@ func newHarness(t *testing.T) *harness {
 	// Event handlers read the status back, as the daemon's do; a command
 	// that holds the lock while it notifies must not deadlock.
 	a.events = &statusEvents{a: a}
-	return &harness{t: t, a: a, pres: p, v: v}
+	return &harness{t: t, a: a, pres: p, v: v, vaultPath: vaultPath}
 }
 
 // do sends one command and returns status and decoded response.
@@ -612,5 +615,163 @@ func TestVaultIsUselessWithoutPIN(t *testing.T) {
 	// A wrong PIN never yields the keys.
 	if _, err := h.v.Unlock(bytes.Repeat([]byte{9}, 16)); err != vault.ErrWrongPIN {
 		t.Fatalf("unlock with wrong PIN: %v", err)
+	}
+}
+
+// Review finding (marketplace #13302): paged credential-management results
+// must not outlive the pinUvAuthToken that authorised them — neither the RP
+// pages nor the account pages, whether the token expires by its idle timer
+// or by its maximum lifetime.
+func TestEnumerationEndsWithToken(t *testing.T) {
+	for _, expire := range []string{"idle", "lifetime", "timer"} {
+		t.Run(expire, func(t *testing.T) {
+			h := newHarness(t)
+			h.setPIN("hunter22")
+			h.makeCred("hunter22", "a.example", []byte("u1"), "u1", true, nil)
+			h.makeCred("hunter22", "b.example", []byte("u2"), "u2", true, nil)
+			h.makeCred("hunter22", "b.example", []byte("u3"), "u3", true, nil)
+
+			st, tok, p := h.token("hunter22", permCM, "")
+			if st != 0 {
+				t.Fatal(st)
+			}
+			auth := func(sub byte, params any) []byte {
+				msg := []byte{sub}
+				if params != nil {
+					msg = append(msg, encode(params)...)
+				}
+				return p.proto.Authenticate(tok, msg)
+			}
+			ageToken := func() {
+				switch expire {
+				case "idle":
+					h.a.tok.lastUse = h.a.tok.lastUse.Add(-tokenInitialLimit - time.Second)
+				case "lifetime":
+					h.a.tok.issued = h.a.tok.issued.Add(-tokenMaxUsage - time.Second)
+				case "timer":
+					h.a.lastExpire()
+				}
+			}
+
+			h.must(cmdCredentialManagement, map[int]any{1: cmEnumerateRPsBegin, 3: 2, 4: auth(cmEnumerateRPsBegin, nil)})
+			ageToken()
+			if st, _ := h.do(cmdCredentialManagement, map[int]any{1: cmEnumerateRPsNext}); st != ErrNotAllowed {
+				t.Fatalf("RP page after expiry: 0x%02x", st)
+			}
+
+			st, tok, p = h.token("hunter22", permCM, "")
+			if st != 0 {
+				t.Fatal(st)
+			}
+			sp := map[int]any{1: cdh("b.example")}
+			h.must(cmdCredentialManagement, map[int]any{1: cmEnumerateCredsBegin, 2: sp, 3: 2, 4: auth(cmEnumerateCredsBegin, sp)})
+			ageToken()
+			if st, _ := h.do(cmdCredentialManagement, map[int]any{1: cmEnumerateCredsNext}); st != ErrNotAllowed {
+				t.Fatalf("account page after expiry: 0x%02x", st)
+			}
+			if h.a.enumRPs != nil || h.a.enumCreds != nil {
+				t.Fatal("decrypted pages still cached")
+			}
+		})
+	}
+}
+
+// lastExpire fires the token's expiry timer as if its idle limit had passed.
+func (a *Authenticator) lastExpire() {
+	if t := a.tok; t != nil {
+		t.lastUse = t.lastUse.Add(-tokenInitialLimit - time.Second)
+		a.expireToken(t)
+	}
+}
+
+// blockingPresence holds "manage" prompts open until their context ends and
+// confirms everything else at once.
+type blockingPresence struct{ started chan string }
+
+func (b *blockingPresence) Confirm(ctx context.Context, p Prompt) error {
+	b.started <- p.Op
+	if p.Op == "manage" {
+		<-ctx.Done()
+		return ErrPresenceDenied
+	}
+	return nil
+}
+
+// The passkey manager never blocks a browser: a sign-in that needs the key
+// press withdraws an open manager prompt, a second manager request is
+// refused while one is open, and a refused prompt is not re-raised at once.
+func TestManagerYieldsToBrowser(t *testing.T) {
+	h := newHarness(t)
+	h.setPIN("hunter22")
+	bp := &blockingPresence{started: make(chan string, 8)}
+	h.a.presence = bp
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := h.a.UserList(context.Background(), "hunter22")
+		done <- err
+	}()
+	if op := <-bp.started; op != "manage" {
+		t.Fatalf("first prompt %q", op)
+	}
+	if _, err := h.a.UserList(context.Background(), "hunter22"); err != ErrManageBusy {
+		t.Fatalf("second manager request: %v", err)
+	}
+	// A browser asks the user to pick this key (authenticatorSelection).
+	resp := h.a.CBOR(context.Background(), []byte{cmdSelection}, func(byte) {})
+	if resp[0] != StatusOK {
+		t.Fatalf("selection while the manager waited: 0x%02x", resp[0])
+	}
+	select {
+	case err := <-done:
+		if err != ErrNotConfirmed {
+			t.Fatalf("withdrawn manager request: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the manager prompt was not withdrawn")
+	}
+	if _, err := h.a.UserList(context.Background(), "hunter22"); err != ErrManageQuiet {
+		t.Fatalf("immediate re-raise: %v", err)
+	}
+}
+
+// A failed write must not leave memory ahead of the disk.
+func TestVaultRollsBackOnFailedWrite(t *testing.T) {
+	h := newHarness(t)
+	h.setPIN("hunter22")
+	cred := h.makeCred("hunter22", "example.com", []byte("u"), "u", true, nil)
+	dir := filepath.Dir(h.vaultPath)
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chmod(dir, 0o700)
+	if err := h.v.Delete(cred.id); err == nil {
+		t.Skip("directory still writable (running as root?)")
+	}
+	if h.v.FindByID(cred.id) == nil {
+		t.Fatal("credential gone from memory although the delete was not saved")
+	}
+	if err := h.v.Reset(); err == nil {
+		t.Fatal("reset succeeded without writing")
+	}
+	if !h.v.PINSet() {
+		t.Fatal("PIN gone from memory although the reset was not saved")
+	}
+}
+
+// Retries are refunded only up to the maximum.
+func TestRefundPINRetry(t *testing.T) {
+	h := newHarness(t)
+	h.setPIN("hunter22")
+	h.v.ConsumePINRetry()
+	h.v.ConsumePINRetry()
+	h.v.RefundPINRetry()
+	if got := h.v.PINRetries(); got != vault.MaxPINRetries-1 {
+		t.Fatalf("retries %d", got)
+	}
+	h.v.RefundPINRetry()
+	h.v.RefundPINRetry()
+	if got := h.v.PINRetries(); got != vault.MaxPINRetries {
+		t.Fatalf("refund above the maximum: %d", got)
 	}
 }

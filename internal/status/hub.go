@@ -14,6 +14,10 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+// maxClients bounds the connected desktop clients (a shell per seat and a
+// few `omapasskey watch` are normal).
+const maxClients = 32
+
 // Prompt is a confirmation the user is being asked for.
 type Prompt struct {
 	ID        uint64   `json:"id"`
@@ -89,11 +93,18 @@ func (h *Hub) serve(l net.Listener) {
 		}
 		c := &client{conn: conn, out: make(chan []byte, 32)}
 		h.mu.Lock()
+		if len(h.clients) >= maxClients {
+			h.mu.Unlock()
+			conn.Close()
+			continue
+		}
 		h.clients[c] = struct{}{}
 		h.mu.Unlock()
 		go h.write(c)
 		go h.discard(c)
-		h.sendTo(c, map[string]any{"type": "hello", "state": h.snapshot()})
+		// Built per client, off the accept loop, so one slow snapshot never
+		// holds up other clients.
+		go h.sendTo(c, map[string]any{"type": "hello", "state": h.snapshot()})
 	}
 }
 

@@ -30,3 +30,5 @@ jobs:
         run: CGO_ENABLED=1 go test -race -count=1 ./...
       - name: Build release binaries
         run: ./scripts/build-release.sh
+      - name: Binaries match the checksums the installer pins
+        run: diff <(cd dist && sha256sum -- * | sort -k2) <(sort -k2 setup/SHA256SUMS)

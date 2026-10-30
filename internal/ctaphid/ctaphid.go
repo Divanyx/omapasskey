@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"encoding/binary"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -91,6 +92,7 @@ type Server struct {
 	channels map[uint32]time.Time
 	asm      *assembly
 	busy     *transaction
+	winking  atomic.Bool
 }
 
 type assembly struct {
@@ -145,11 +147,16 @@ func (s *Server) HandleReport(r []byte) {
 		return
 	}
 	if cid == broadcastCID {
-		s.sendError(cid, ErrInvalidChannel)
+		if cmd != CmdCancel {
+			s.sendError(cid, ErrInvalidChannel)
+		}
 		return
 	}
 	if _, ok := s.channels[cid]; !ok {
-		s.sendError(cid, ErrInvalidChannel)
+		// CANCEL is never answered, not even on an unknown channel.
+		if cmd != CmdCancel {
+			s.sendError(cid, ErrInvalidChannel)
+		}
 		return
 	}
 	s.channels[cid] = time.Now()
@@ -314,7 +321,13 @@ func (s *Server) dispatch(cid uint32, cmd byte, data []byte) {
 			return
 		}
 		s.send(cid, CmdWink, nil)
-		go s.handler.Wink()
+		// One wink at a time, however fast they are asked for.
+		if s.winking.CompareAndSwap(false, true) {
+			go func() {
+				s.handler.Wink()
+				s.winking.Store(false)
+			}()
+		}
 	case CmdCBOR:
 		if len(data) == 0 {
 			s.sendError(cid, ErrInvalidLen)

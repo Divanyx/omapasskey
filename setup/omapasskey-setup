@@ -11,7 +11,7 @@
 # (setup/SHA256SUMS), or builds them from this checkout with --from-source.
 set -euo pipefail
 
-VERSION="1.1.2"
+VERSION="1.2.0"
 LIBDIR=/usr/local/lib/omapasskey
 CLI=/usr/local/bin/omapasskey
 UNIT=/etc/systemd/system/omapasskeyd.service
@@ -207,14 +207,14 @@ EOF
   fi
   sudo systemctl disable --now omapasskeyd.service 2>/dev/null || true
   sudo rm -f "$UNIT" "$CLI" "$SYSUSERS" "$MODULES"
-  sudo rm -rf "$LIBDIR" "$CONFDIR"
+  sudo rm -rf "$LIBDIR"
   sudo systemctl daemon-reload
   if ((purge)); then
-    sudo rm -rf "$STATEDIR"
+    sudo rm -rf "$STATEDIR" "$CONFDIR"
     sudo userdel omapasskey 2>/dev/null || true
     echo "Service and passkeys removed."
   else
-    echo "Service removed; passkeys kept in $STATEDIR (reinstall to use them again)."
+    echo "Service removed; passkeys kept in $STATEDIR and settings in $CONFDIR (reinstall to use them again)."
   fi
   echo "Remove the bar plugin with: omarchy plugin remove omapasskey"
 }

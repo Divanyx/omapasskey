@@ -49,6 +49,9 @@ type Config struct {
 	Descriptor []byte
 }
 
+// ErrBadEvent is a malformed event; the device keeps working.
+var ErrBadEvent = errors.New("uhid: malformed event")
+
 // Event is one message from the kernel.
 type Event struct {
 	Type uint32
@@ -156,7 +159,7 @@ func (d *Device) ReadEvent() (Event, error) {
 		return Event{}, err
 	}
 	if n < 4 {
-		return Event{}, fmt.Errorf("uhid: short event (%d bytes)", n)
+		return Event{}, fmt.Errorf("%w: short event (%d bytes)", ErrBadEvent, n)
 	}
 	b := d.readBuf
 	ev := Event{Type: binary.NativeEndian.Uint32(b[0:])}
@@ -165,7 +168,7 @@ func (d *Device) ReadEvent() (Event, error) {
 		// struct uhid_output_req { data[4096]; u16 size; u8 rtype; }
 		size := int(binary.NativeEndian.Uint16(b[4+dataMax:]))
 		if size > dataMax {
-			return Event{}, errors.New("uhid: bad output size")
+			return Event{}, fmt.Errorf("%w: output size %d", ErrBadEvent, size)
 		}
 		ev.Data = append([]byte(nil), b[4:4+size]...)
 	case EventGetReport, EventSetReport:

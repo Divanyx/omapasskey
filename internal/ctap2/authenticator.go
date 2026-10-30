@@ -67,12 +67,19 @@ type Authenticator struct {
 	presence Presence
 	events   Events
 
-	mu          sync.Mutex
+	mu           sync.Mutex
+	slot         chan struct{} // admits one CTAP command at a time
+	manage       sync.Mutex    // one passkey-manager request at a time
+	manageQuiet  time.Time     // no manager prompts until then (after a refusal)
+	cancelManage context.CancelFunc
+	pmu          sync.Mutex // guards manageQuiet and cancelManage
+	// presenceMu admits one key-press wait at a time, so one press can never
+	// confirm two requests.
+	presenceMu  sync.Mutex
 	ka          *pinuv.KeyAgreement
 	tok         *token
 	consecutive int       // consecutive wrong PINs since the last "power cycle"
 	blockedAt   time.Time // when three consecutive mismatches blocked PIN entry
-	selectedAt  time.Time // when the user last picked this key with a key press
 	pending     *pendingAssertion
 	enumRPs     *rpEnumeration
 	enumCreds   *credEnumeration
@@ -87,7 +94,7 @@ func New(cfg Config, v *vault.Vault, p Presence, e Events) (*Authenticator, erro
 	if cfg.MinPINLength < 4 {
 		cfg.MinPINLength = 4
 	}
-	return &Authenticator{cfg: cfg, vault: v, presence: p, events: e, ka: ka}, nil
+	return &Authenticator{cfg: cfg, vault: v, presence: p, events: e, ka: ka, slot: make(chan struct{}, 1)}, nil
 }
 
 // request carries the per-command context.
@@ -98,8 +105,19 @@ type request struct {
 
 // CBOR implements ctaphid.Handler.
 func (a *Authenticator) CBOR(ctx context.Context, msg []byte, status func(byte)) []byte {
+	// One command at a time; a command the platform abandoned while it was
+	// queued leaves at once instead of piling up behind the lock.
+	select {
+	case a.slot <- struct{}{}:
+	case <-ctx.Done():
+		return []byte{ErrKeepaliveCancel}
+	}
+	defer func() { <-a.slot }()
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	if ctx.Err() != nil {
+		return []byte{ErrKeepaliveCancel}
+	}
 	r := &request{ctx: ctx, status: status}
 	resp, err := a.dispatch(r, msg[0], msg[1:])
 	if err != nil {
@@ -152,7 +170,6 @@ func (a *Authenticator) dispatch(r *request, cmd byte, params []byte) (any, erro
 		if err := a.confirm(r, Prompt{Op: "select"}, true); err != nil {
 			return nil, err
 		}
-		a.selectedAt = time.Now()
 		return nil, nil
 	}
 	return nil, Error(ErrInvalidCommand)
@@ -193,7 +210,20 @@ func (a *Authenticator) getInfo() map[int]any {
 func (a *Authenticator) confirm(r *request, p Prompt, selection bool) error {
 	r.status(ctaphid.StatusUPNeeded)
 	defer r.status(ctaphid.StatusProcessing)
+	// A browser request outranks the passkey manager: a manager prompt that
+	// is still open is withdrawn rather than letting it delay a sign-in.
+	if p.Op != "manage" {
+		a.pmu.Lock()
+		if a.cancelManage != nil {
+			a.cancelManage()
+		}
+		a.pmu.Unlock()
+		a.presenceMu.Lock()
+	} else if !a.presenceMu.TryLock() {
+		return ErrPresenceDenied
+	}
 	err := a.presence.Confirm(r.ctx, p)
+	a.presenceMu.Unlock()
 	switch {
 	case err == nil:
 		return nil
@@ -234,22 +264,9 @@ func (a *Authenticator) PowerCycle() {
 	a.enumRPs, a.enumCreds = nil, nil
 	a.consecutive = 0
 	a.blockedAt = time.Time{}
-	a.selectedAt = time.Time{}
 	if ka, err := pinuv.NewKeyAgreement(); err == nil {
 		a.ka = ka
 	}
-}
-
-// selectionCredit is how long picking this key with a key press also counts
-// as the key press for the PIN that follows. Chromium always asks the user to
-// pick the key before it asks for the PIN; without this it would take two.
-const selectionCredit = 20 * time.Second
-
-// takeSelection consumes a recent selection, if there is one.
-func (a *Authenticator) takeSelection() bool {
-	ok := !a.selectedAt.IsZero() && time.Since(a.selectedAt) < selectionCredit
-	a.selectedAt = time.Time{}
-	return ok
 }
 
 func rpHash(rpID string) []byte {

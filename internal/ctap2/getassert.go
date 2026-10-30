@@ -105,7 +105,6 @@ func (a *Authenticator) getAssertion(r *request, params []byte) (any, error) {
 		if err := a.confirm(r, Prompt{Op: "select"}, false); err != nil {
 			return nil, err
 		}
-		a.selectedAt = time.Now()
 		if a.vault.PINSet() {
 			return nil, Error(ErrPINInvalid)
 		}

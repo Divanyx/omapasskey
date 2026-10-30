@@ -194,10 +194,15 @@ func (a *Authenticator) checkPIN(r *request, proto pinuv.Protocol, secret, pinHa
 	if a.authBlocked() {
 		return nil, Error(ErrPINAuthBlocked)
 	}
-	if !a.takeSelection() {
-		if err := a.confirm(r, prompt, false); err != nil {
-			return nil, err
-		}
+	// Every PIN check gets its own key press: a press made for anything
+	// else (a selection, another channel) must not let software spend a
+	// retry.
+	if err := a.confirm(r, prompt, false); err != nil {
+		return nil, err
+	}
+	// The platform may have given up while the user was pressing the keys.
+	if r.ctx.Err() != nil {
+		return nil, Error(ErrKeepaliveCancel)
 	}
 	left, err := a.vault.ConsumePINRetry()
 	if err != nil {
@@ -213,10 +218,13 @@ func (a *Authenticator) checkPIN(r *request, proto pinuv.Protocol, secret, pinHa
 	case errors.Is(err, vault.ErrWrongPIN):
 		return nil, a.pinMismatch(left)
 	case errors.Is(err, vault.ErrLockout):
-		// The TPM itself refuses further guesses for a while.
+		// The TPM itself refuses guesses for a while. It never judged
+		// this PIN, so the attempt costs nothing.
+		a.vault.RefundPINRetry()
 		a.newKeyAgreement()
 		return nil, Error(ErrPINAuthBlocked)
 	case err != nil:
+		a.vault.RefundPINRetry()
 		return nil, Error(ErrOther)
 	}
 	a.consecutive = 0
