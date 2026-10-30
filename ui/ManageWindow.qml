@@ -34,7 +34,7 @@ PanelWindow {
   readonly property color fg: Commons.Color.foreground
   readonly property color bg: Commons.Color.background
   readonly property color acc: Commons.Color.accent
-  readonly property string keysText: service && service.confirmKeys.length ? service.confirmKeys.join(" + ") : "Left Shift + Right Shift"
+  readonly property string keysText: service && service.confirmKeys.length ? service.confirmKeys.join(" + ") : "Left Ctrl + Right Ctrl"
 
   visible: false
   color: "transparent"

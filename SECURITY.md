@@ -42,7 +42,7 @@ PIN ──LEFT(SHA-256,16)──HKDF(salt)──► auth value of a TPM sealed o
 
 ### User presence
 
-A CTAP "touch" is Left Shift + Right Shift held together on one keyboard whose sysfs device path is on a physical bus (not under `/sys/devices/virtual`). The keyboards are opened only while a confirmation is pending, the press must start after the prompt appears, and Esc cancels. Software-generated input — uinput (ydotool, input-remapper, remote desktops), uhid (including Bluetooth LE keyboards), Wayland virtual keyboards — cannot satisfy it.
+A CTAP "touch" is the confirm combination (Left Ctrl + Right Ctrl by default) held together on one keyboard whose sysfs device path is on a physical bus (not under `/sys/devices/virtual`). The keyboards are opened only while a confirmation is pending, the press must start after the prompt appears, and Esc cancels. Software-generated input — uinput (ydotool, input-remapper, remote desktops), uhid (including Bluetooth LE keyboards), Wayland virtual keyboards — cannot satisfy it.
 
 Presence is collected **before** a PIN is checked, so software cannot spend PIN retries, and once per ceremony: the press that accompanied the PIN also covers the registration or sign-in it authorises (within 30 s).
 
@@ -50,7 +50,7 @@ Presence is collected **before** a PIN is checked, so software cannot spend PIN 
 
 The right-click manager sends the PIN to the service over `/run/omapasskey/manage.sock` (only the configured desktop users may connect). The service answers only after the confirm keys are pressed on a physical keyboard, and the same PIN retry counter and TPM lockout apply. The PIN is typed into the desktop shell, which runs as you — like any PIN prompt on a Linux desktop — but knowing it is never enough without the key press.
 
-The confirm-key combination (default Left Shift + Right Shift) is set in the root-owned `/etc/omapasskey/omapasskey.conf` (`confirm_keys`), so software running as you cannot weaken it.
+The confirm-key combination (default Left Ctrl + Right Ctrl) is set in the root-owned `/etc/omapasskey/omapasskey.conf` (`confirm_keys`), so software running as you cannot weaken it.
 
 ### Deliberate deviations from CTAP 2.1
 

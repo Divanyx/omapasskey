@@ -60,7 +60,7 @@ Item {
   readonly property string tooltip: !installChecked ? "Omapasskey"
     : !installed ? "Omapasskey — not set up yet: click to install the TPM passkey service"
     : !connected ? "Omapasskey — the service is not running: click to repair it"
-    : waiting ? "Omapasskey — " + describe(prompt) + ": press " + (confirmKeys.length ? confirmKeys.join(" + ") : "Left Shift + Right Shift")
+    : waiting ? "Omapasskey — " + describe(prompt) + ": press " + (confirmKeys.length ? confirmKeys.join(" + ") : "Left Ctrl + Right Ctrl")
     : !pinSet ? "Omapasskey — no PIN yet: click to set one"
     : updateAvailable ? "Omapasskey — service " + version + ", plugin " + pluginVersion + ": click to update"
     : pinRetries < 8 ? "Omapasskey — ready (" + pinRetries + " of 8 PIN tries left)"

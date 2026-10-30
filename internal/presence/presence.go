@@ -1,5 +1,6 @@
 // Package presence collects the FIDO "test of user presence" from a physical
-// keyboard: the user holds Left Shift and Right Shift together.
+// keyboard: the user holds a key combination (Left Ctrl + Right Ctrl by
+// default) together.
 //
 // Only devices attached to real hardware count. Everything software can
 // create — uinput devices (ydotool, xdotool's uinput backend, remote-desktop

@@ -11,7 +11,7 @@
 # (setup/SHA256SUMS), or builds them from this checkout with --from-source.
 set -euo pipefail
 
-VERSION="1.2.0"
+VERSION="1.2.1"
 LIBDIR=/usr/local/lib/omapasskey
 CLI=/usr/local/bin/omapasskey
 UNIT=/etc/systemd/system/omapasskeyd.service
@@ -116,7 +116,7 @@ do_install() {
 
 This installs a small system service that browsers see as a USB security key.
 Its keys are created inside your TPM and can never leave it. Every passkey
-use needs your PIN and a press of both Shift keys on a physical keyboard.
+use needs your PIN and both Ctrl keys pressed on a physical keyboard.
 
 It will install, with sudo:
   /usr/local/lib/omapasskey/omapasskeyd     the service (runs as user "omapasskey")
@@ -151,7 +151,7 @@ EOF
       "users = $uid" \
       "# Shortest PIN accepted (4-63 characters)." \
       "min_pin_length = 6" \
-      "# Seconds to press both Shift keys before a request lapses (5-120)." \
+      "# Seconds to press the confirm keys before a request lapses (5-120)." \
       "presence_timeout = 30" | sudo tee "$CONFDIR/omapasskey.conf" >/dev/null
     sudo chmod 0644 "$CONFDIR/omapasskey.conf"
   fi
@@ -183,7 +183,7 @@ EOF
   cat <<'EOF'
 
 Try it: open https://webauthn.io in Firefox, register, then sign in. Your
-browser asks for the PIN, the Omapasskey prompt asks for both Shift keys.
+browser asks for the PIN, the Omapasskey prompt asks for both Ctrl keys.
 
 Keep another way to sign in to every account (a second key or recovery
 codes): passkeys made here live in this computer's TPM and cannot be copied.

@@ -2,11 +2,11 @@
   "schemaVersion": 1,
   "id": "omapasskey",
   "name": "Omapasskey",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "author": "Divanyx",
   "license": "MIT",
   "homepage": "https://github.com/Divanyx/omapasskey",
-  "description": "Passkeys for Omarchy the way Windows Hello and macOS do them: Firefox, Chromium and every FIDO2 app store passkeys on this machine, in the TPM chip. Keys never leave the TPM, every use needs your PIN plus both Shift keys pressed on a real keyboard, so no program or AI agent can sign in for you. A themed prompt shows which site is asking.",
+  "description": "Passkeys for Omarchy the way Windows Hello and macOS do them: Firefox, Chromium and every FIDO2 app store passkeys on this machine, in the TPM chip. Keys never leave the TPM, every use needs your PIN plus both Ctrl keys pressed on a real keyboard, so no program or AI agent can sign in for you. A themed prompt shows which site is asking.",
   "kinds": [
     "service",
     "bar-widget"
@@ -36,7 +36,7 @@
       "showBarIcon": true,
       "promptPosition": "Center",
       "usageNotes": false,
-      "confirmKeys": "leftshift+rightshift"
+      "confirmKeys": "leftctrl+rightctrl"
     },
     "schema": [
       {
@@ -50,7 +50,7 @@
         "key": "confirmKeys",
         "type": "string",
         "label": "Keys that confirm a passkey use",
-        "defaultValue": "leftshift+rightshift",
+        "defaultValue": "leftctrl+rightctrl",
         "description": "2 to 4 keys pressed together on a physical keyboard, joined with +, e.g. leftctrl+rightctrl or leftalt+space or rightctrl+f12. Changing it opens a terminal that asks for sudo, because the setting lives in the root-owned service config."
       },
       {

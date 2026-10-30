@@ -7,7 +7,7 @@ import qs.Commons as Commons
 import qs.Ui
 
 // The confirmation card. It never takes keyboard focus and lets every click
-// through: the browser keeps focus, and the Shift keys are read by the
+// through: the browser keeps focus, and the confirm keys are read by the
 // service straight from the keyboard, not from this window.
 PanelWindow {
   id: win
@@ -24,7 +24,7 @@ PanelWindow {
   // The confirming keys, as the service announced them.
   readonly property var keyLabels: {
     var p = service ? (service.prompt || service.outcomePrompt) : null
-    var k = p && p.keys && p.keys.length ? p.keys : (service && service.confirmKeys.length ? service.confirmKeys : ["Left Shift", "Right Shift"])
+    var k = p && p.keys && p.keys.length ? p.keys : (service && service.confirmKeys.length ? service.confirmKeys : ["Left Ctrl", "Right Ctrl"])
     return k
   }
   readonly property var keycaps: {
@@ -153,7 +153,7 @@ PanelWindow {
         }
       }
 
-      // The gesture: both Shift keys together.
+      // The gesture: the confirm keys together.
       Row {
         visible: !win.noteOnly && win.service !== null && win.service.waiting
         anchors.horizontalCenter: parent.horizontalCenter

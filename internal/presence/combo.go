@@ -7,9 +7,9 @@ import (
 
 // Combo is the key combination that counts as a "touch".
 type Combo struct {
-	Spec   string   // canonical form, e.g. "leftshift+rightshift"
+	Spec   string   // canonical form, e.g. "leftctrl+rightctrl"
 	Codes  []int    // evdev key codes
-	Labels []string // for the prompt, e.g. "Left Shift"
+	Labels []string // for the prompt, e.g. "Left Ctrl"
 }
 
 type keyName struct {
@@ -41,9 +41,11 @@ var keyNames = map[string]keyName{
 	"n": {49, "N"}, "m": {50, "M"},
 }
 
-// DefaultCombo is both Shift keys.
+// DefaultCombo is both Ctrl keys. Not both Shift keys: Omarchy maps those to
+// Caps Lock (shift:both_capslock_cancel), so every confirmation would toggle
+// it. Two Ctrl keys alone do nothing anywhere.
 func DefaultCombo() *Combo {
-	c, _ := ParseCombo("leftshift+rightshift")
+	c, _ := ParseCombo("leftctrl+rightctrl")
 	return c
 }
 
@@ -52,7 +54,7 @@ func DefaultCombo() *Combo {
 func ParseCombo(spec string) (*Combo, error) {
 	parts := strings.FieldsFunc(strings.ToLower(spec), func(r rune) bool { return r == '+' || r == ' ' || r == ',' })
 	if len(parts) < 2 || len(parts) > 4 {
-		return nil, fmt.Errorf("a combination needs 2 to 4 keys, e.g. leftshift+rightshift")
+		return nil, fmt.Errorf("a combination needs 2 to 4 keys, e.g. leftctrl+rightctrl")
 	}
 	c := &Combo{}
 	seen := map[int]bool{}

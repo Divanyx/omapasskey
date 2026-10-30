@@ -49,7 +49,7 @@ func TestParseCombo(t *testing.T) {
 			t.Errorf("%q accepted", bad)
 		}
 	}
-	if DefaultCombo().Spec != "leftshift+rightshift" {
+	if DefaultCombo().Spec != "leftctrl+rightctrl" {
 		t.Fatal("default")
 	}
 }
