@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/exec"
@@ -241,7 +242,13 @@ func cmdList() error {
 		fmt.Println("No passkeys stored yet.")
 		return nil
 	}
-	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+	return printAccounts(os.Stdout, accts)
+}
+
+// printAccounts writes the passkey table. Site and account names come from
+// websites, so they pass through termSafe.
+func printAccounts(out io.Writer, accts []ctap2.AccountInfo) error {
+	w := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
 	fmt.Fprintln(w, "ID\tSITE\tACCOUNT\tKIND\tCREATED")
 	for _, a := range accts {
 		kind := "passkey"
@@ -255,7 +262,7 @@ func cmdList() error {
 		if account == "" {
 			account = a.DisplayName
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", hex.EncodeToString(a.ID[:min(6, len(a.ID))]), a.RPID, account, kind,
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", hex.EncodeToString(a.ID[:min(6, len(a.ID))]), termSafe(a.RPID), termSafe(account), kind,
 			time.Unix(a.Created, 0).Format("02-01-2006 15:04"))
 	}
 	return w.Flush()
@@ -305,7 +312,7 @@ func cmdStatus(asJSON bool) error {
 			return err
 		}
 		if asJSON {
-			fmt.Println(string(resp.Data))
+			fmt.Println(termSafe(string(resp.Data)))
 			return nil
 		}
 		var st struct {
@@ -340,7 +347,7 @@ func cmdStatus(asJSON bool) error {
 		}
 		fmt.Printf("  keyboards   %d physical keyboard(s) can confirm\n", len(st.Keyboards))
 		for _, k := range st.Keyboards {
-			fmt.Printf("              - %s\n", k.Name)
+			fmt.Printf("              - %s\n", termSafe(k.Name))
 		}
 		return nil
 	}
@@ -355,7 +362,7 @@ func cmdStatus(asJSON bool) error {
 		return errors.New("the service did not answer; is your user allowed in /etc/omapasskey/omapasskey.conf?")
 	}
 	if asJSON {
-		fmt.Print(string(line))
+		fmt.Println(termSafe(strings.TrimSuffix(string(line), "\n")))
 		return nil
 	}
 	var hello struct {
@@ -386,7 +393,7 @@ func cmdWatch() error {
 	defer conn.Close()
 	sc := bufio.NewScanner(conn)
 	for sc.Scan() {
-		fmt.Printf("%s  %s\n", time.Now().Format("15:04:05"), sc.Text())
+		fmt.Printf("%s  %s\n", time.Now().Format("15:04:05"), termSafe(sc.Text()))
 	}
 	return sc.Err()
 }
